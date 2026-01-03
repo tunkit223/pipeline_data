@@ -1,6 +1,7 @@
 package com.piplineData.loadService.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.Data;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,16 @@ public class BatchSpec {
     @JsonProperty("orderBy")
     private String orderBy;
 
+    // Custom SQL support
+    @JsonProperty("customSourceSql")
+    private String customSourceSql;  // Full SELECT SQL for source
+
+    @JsonProperty("customDestSql")
+    private String customDestSql;    // Full SELECT SQL for destination
+
+    @JsonProperty("runtimeParams")
+    private Map<String, String> runtimeParams;  // Runtime parameters from execution
+
     // Legacy support - old structure
     @JsonProperty("data_obj_code")
     private String dataObjCode;
@@ -37,7 +48,8 @@ public class BatchSpec {
     @JsonProperty("scriptusageid")
     private String scriptUsageId;
 
-    @JsonProperty("exec_para_list")
+    @JsonProperty("execParaList")
+    @JsonAlias({"exec_para_list"})
     private Map<String, String> execParaList;
 
     @JsonProperty("script")

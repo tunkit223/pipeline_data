@@ -60,14 +60,17 @@ public class SimplifiedDataSyncService {
             // 2. Parse BatchSpec
             BatchSpec batchSpec = batchSpecParser.parseBatchSpec(dataObject.getBatchSpec());
             batchSpecParser.validateBatchSpec(batchSpec);
+            
+            // Convert runtimeParams to String map for SQL replacement
+            Map<String, String> runtimeParamsStr = convertToStringMap(runtimeParams);
 
             // 3. Check if simplified structure
-            if (batchSpec.getSourceTable() == null) {
-                throw new DataSyncException("This service only handles simplified BatchSpec structure");
+            if (batchSpec.getSourceTable() == null && batchSpec.getCustomSourceSql() == null) {
+                throw new DataSyncException("BatchSpec must have either sourceTable or customSourceSql");
             }
 
-            // 4. Build source SQL
-            String sourceSql = buildSourceSql(batchSpec);
+            // 4. Build source SQL (with parameter replacement)
+            String sourceSql = buildSourceSql(batchSpec, runtimeParamsStr);
             log.info("Source SQL: {}", sourceSql);
 
             // 5. Fetch source data
@@ -92,10 +95,10 @@ public class SimplifiedDataSyncService {
             JdbcTemplate destJdbc = new JdbcTemplate(destDataSource);
 
             // 7. Auto-create destination table if not exists
-            createDestinationTableIfNotExists(destJdbc, batchSpec);
+            createDestinationTableIfNotExists(destJdbc, dataObject, batchSpec);
 
-            // 7. Fetch existing data from destination
-            String destSelectSql = buildDestinationSelectSql(batchSpec);
+            // 8. Fetch existing data from destination (with parameter replacement)
+            String destSelectSql = buildDestinationSelectSql(batchSpec, runtimeParamsStr);
             List<Map<String, Object>> destData = destJdbc.queryForList(destSelectSql);
             log.info("Fetched {} existing records from destination", destData.size());
 
@@ -178,8 +181,21 @@ public class SimplifiedDataSyncService {
         }
     }
 
-    private String buildSourceSql(BatchSpec batchSpec) {
-        // SELECT * để lấy tất cả cột (bao gồm cả extra fields)
+    private String buildSourceSql(BatchSpec batchSpec, Map<String, String> runtimeParams) {
+        // Check if custom SQL mode
+        if (batchSpec.getCustomSourceSql() != null && !batchSpec.getCustomSourceSql().isEmpty()) {
+            log.info("Using custom source SQL");
+            
+            // Merge parameters: execParaList (from definition) + runtimeParams (from execution)
+            Map<String, String> allParams = mergeParameters(batchSpec, runtimeParams);
+            
+            // Replace parameters in custom SQL
+            String sql = replaceParameters(batchSpec.getCustomSourceSql(), allParams);
+            log.debug("Custom SQL after parameter replacement: {}", sql);
+            return sql;
+        }
+        
+        // Simplified mode: SELECT * FROM table
         StringBuilder sql = new StringBuilder("SELECT * FROM ");
         sql.append(batchSpec.getSourceTable());
         
@@ -194,7 +210,21 @@ public class SimplifiedDataSyncService {
         return sql.toString();
     }
 
-    private String buildDestinationSelectSql(BatchSpec batchSpec) {
+    private String buildDestinationSelectSql(BatchSpec batchSpec, Map<String, String> runtimeParams) {
+        // Check if custom destination SQL
+        if (batchSpec.getCustomDestSql() != null && !batchSpec.getCustomDestSql().isEmpty()) {
+            log.info("Using custom destination SQL");
+            
+            // Merge parameters
+            Map<String, String> allParams = mergeParameters(batchSpec, runtimeParams);
+            
+            // Replace parameters
+            String sql = replaceParameters(batchSpec.getCustomDestSql(), allParams);
+            log.debug("Custom dest SQL after parameter replacement: {}", sql);
+            return sql;
+        }
+        
+        // Simplified mode: SELECT fields + extra_data
         StringBuilder sql = new StringBuilder("SELECT ");
         
         for (int i = 0; i < batchSpec.getFields().size(); i++) {
@@ -466,12 +496,26 @@ public class SimplifiedDataSyncService {
     /**
      * Tự động tạo destination table nếu chưa tồn tại
      */
-    private void createDestinationTableIfNotExists(JdbcTemplate jdbc, BatchSpec batchSpec) {
+    private void createDestinationTableIfNotExists(JdbcTemplate jdbc, DataObject dataObject, BatchSpec batchSpec) {
         try {
-            // Parse schema and table name
+            // Parse table name from destTable (may include schema)
             String[] parts = batchSpec.getDestTable().split("\\.");
-            String schema = parts.length > 1 ? parts[0] : "pipeline_data";
             String tableName = parts.length > 1 ? parts[1] : parts[0];
+            
+            // Use schema from DataObject if available, otherwise parse from destTable
+            String schema;
+            if (dataObject.getDestSchema() != null && !dataObject.getDestSchema().trim().isEmpty()) {
+                schema = dataObject.getDestSchema();
+                log.info("Using destSchema from DataObject: {}", schema);
+            } else {
+                schema = parts.length > 1 ? parts[0] : "pipeline_data";
+                log.info("Using schema parsed from destTable: {}", schema);
+            }
+            
+            // Build full table name and update BatchSpec to use consistent schema
+            String fullTableName = schema + "." + tableName;
+            batchSpec.setDestTable(fullTableName);
+            log.info("Normalized destTable to: {}", fullTableName);
             
             // Auto-create schema if not exists
             createSchemaIfNotExists(jdbc, schema);
@@ -483,15 +527,15 @@ public class SimplifiedDataSyncService {
             Integer count = jdbc.queryForObject(checkTableSql, Integer.class, schema, tableName);
             
             if (count != null && count > 0) {
-                log.info("Table {} already exists, checking for extra_data column", batchSpec.getDestTable());
+                log.info("Table {}.{} already exists, checking for extra_data column", schema, tableName);
                 // Table đã tồn tại → kiểm tra và thêm cột extra_data nếu chưa có
-                ensureExtraDataColumnExists(jdbc, schema, tableName, batchSpec.getDestTable());
+                ensureExtraDataColumnExists(jdbc, schema, tableName, fullTableName);
                 return;
             }
 
             // Create table
             StringBuilder createTableSql = new StringBuilder("CREATE TABLE IF NOT EXISTS ")
-                    .append(batchSpec.getDestTable()).append(" (");
+                    .append(fullTableName).append(" (");
             
             for (int i = 0; i < batchSpec.getFields().size(); i++) {
                 MapField field = batchSpec.getFields().get(i);
@@ -523,7 +567,7 @@ public class SimplifiedDataSyncService {
             
             log.info("Creating destination table: {}", createTableSql);
             jdbc.execute(createTableSql.toString());
-            log.info("Table {} created successfully", batchSpec.getDestTable());
+            log.info("Table {} created successfully", fullTableName);
             
         } catch (Exception e) {
             log.error("Failed to create destination table: {}", e.getMessage(), e);
@@ -621,5 +665,67 @@ public class SimplifiedDataSyncService {
             default:
                 return "VARCHAR(255)";
         }
+    }
+    
+    /**
+     * Replace parameters in SQL string
+     * Parameters format: ${param_name}
+     */
+    private String replaceParameters(String sql, Map<String, String> params) {
+        if (sql == null || params == null) {
+            return sql;
+        }
+        
+        String result = sql;
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            String placeholder = "${" + entry.getKey() + "}";
+            String value = entry.getValue();
+            
+            if (value != null) {
+                result = result.replace(placeholder, value);
+            }
+        }
+        
+        log.debug("SQL after parameter replacement: {}", result);
+        return result;
+    }
+    
+    /**
+     * Merge execParaList (from BatchSpec definition) with runtimeParams (from execution request)
+     * runtimeParams will override execParaList if same key exists
+     */
+    private Map<String, String> mergeParameters(BatchSpec batchSpec, Map<String, String> runtimeParams) {
+        Map<String, String> merged = new HashMap<>();
+        
+        // First add execParaList (default values from BatchSpec)
+        if (batchSpec.getExecParaList() != null) {
+            merged.putAll(batchSpec.getExecParaList());
+        }
+        
+        // Then add runtimeParams (override defaults)
+        if (runtimeParams != null) {
+            merged.putAll(runtimeParams);
+        }
+        
+        log.debug("Merged parameters: {}", merged);
+        return merged;
+    }
+    
+    /**
+     * Convert Map<String, Object> to Map<String, String>
+     */
+    private Map<String, String> convertToStringMap(Map<String, Object> objectMap) {
+        if (objectMap == null) {
+            return new HashMap<>();
+        }
+        
+        Map<String, String> stringMap = new HashMap<>();
+        objectMap.forEach((key, value) -> {
+            if (value != null) {
+                stringMap.put(key, value.toString());
+            }
+        });
+        
+        return stringMap;
     }
 }

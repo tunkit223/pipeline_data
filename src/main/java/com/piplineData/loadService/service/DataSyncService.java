@@ -45,7 +45,7 @@ public class DataSyncService {
 
     /**
      * Main method để sync dữ liệu
-     * Auto-detect simplified vs legacy BatchSpec structure
+     * Auto-detect custom SQL, simplified, or legacy BatchSpec structure
      */
     @Transactional
     public SyncResult syncData(String dataObjCode, Map<String, Object> runtimeParams) {
@@ -56,7 +56,11 @@ public class DataSyncService {
             BatchSpec batchSpec = batchSpecParser.parseBatchSpec(dataObject.getBatchSpec());
 
             // Auto-detect structure và route đến service phù hợp
-            if (batchSpec.getSourceTable() != null && batchSpec.getDestTable() != null) {
+            // Priority: Custom SQL > Simplified > Legacy
+            if (batchSpec.getCustomSourceSql() != null && !batchSpec.getCustomSourceSql().trim().isEmpty()) {
+                log.info("Detected custom SQL BatchSpec structure, using SimplifiedDataSyncService");
+                return simplifiedDataSyncService.syncData(dataObjCode, runtimeParams);
+            } else if (batchSpec.getSourceTable() != null && batchSpec.getDestTable() != null) {
                 log.info("Detected simplified BatchSpec structure, using SimplifiedDataSyncService");
                 return simplifiedDataSyncService.syncData(dataObjCode, runtimeParams);
             } else {

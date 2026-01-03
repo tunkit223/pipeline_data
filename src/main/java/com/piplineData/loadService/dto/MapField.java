@@ -47,6 +47,14 @@ public class MapField {
     @JsonProperty("defaultValue")
     private String defaultValue;
     
+    /**
+     * Check if this field is a primary key field
+     * Used for legacy BatchSpec support where build="key"
+     */
+    public boolean isKeyField() {
+        return "key".equalsIgnoreCase(build);
+    }
+    
     // Getters with fallback for compatibility
     public String getFrom() {
         return from != null ? from : sourceField;

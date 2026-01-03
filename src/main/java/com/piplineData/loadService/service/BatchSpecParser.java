@@ -139,22 +139,28 @@ public class BatchSpecParser {
 
     /**
      * Validate BatchSpec
-     * Hỗ trợ cả cấu trúc mới (simplified) và cũ (legacy)
+     * Hỗ trợ 3 cấu trúc: custom SQL, simplified, và legacy
      */
     public void validateBatchSpec(BatchSpec batchSpec) {
         if (batchSpec == null) {
             throw new DataSyncException("BatchSpec cannot be null");
         }
 
-        // Check for new simplified structure
+        // Check for custom SQL structure
+        if (batchSpec.getCustomSourceSql() != null && !batchSpec.getCustomSourceSql().trim().isEmpty()) {
+            validateCustomSqlBatchSpec(batchSpec);
+            return;
+        }
+
+        // Check for simplified structure
         if (batchSpec.getSourceTable() != null && batchSpec.getDestTable() != null) {
             validateSimplifiedBatchSpec(batchSpec);
             return;
         }
 
-        // Check for old legacy structure
+        // Check for legacy structure
         if (batchSpec.getScript() == null || batchSpec.getScript().isEmpty()) {
-            throw new DataSyncException("BatchSpec must contain either simplified structure (sourceTable, destTable, fields) or legacy structure (script)");
+            throw new DataSyncException("BatchSpec must contain either custom SQL (customSourceSql), simplified structure (sourceTable, destTable, fields), or legacy structure (script)");
         }
 
         validateLegacyBatchSpec(batchSpec);
@@ -191,6 +197,46 @@ public class BatchSpecParser {
         }
 
         log.info("Simplified BatchSpec validation passed");
+    }
+
+    /**
+     * Validate custom SQL BatchSpec structure
+     */
+    private void validateCustomSqlBatchSpec(BatchSpec batchSpec) {
+        if (batchSpec.getCustomSourceSql() == null || batchSpec.getCustomSourceSql().trim().isEmpty()) {
+            throw new DataSyncException("customSourceSql is required for custom SQL mode");
+        }
+
+        if (batchSpec.getDestTable() == null || batchSpec.getDestTable().trim().isEmpty()) {
+            throw new DataSyncException("destTable is required");
+        }
+
+        if (batchSpec.getPrimaryKeys() == null || batchSpec.getPrimaryKeys().isEmpty()) {
+            throw new DataSyncException("primaryKeys is required and must contain at least one key");
+        }
+
+        if (batchSpec.getFields() == null || batchSpec.getFields().isEmpty()) {
+            throw new DataSyncException("fields is required and must contain at least one field mapping");
+        }
+
+        // Validate custom SQL không chứa dangerous commands
+        validateSql(batchSpec.getCustomSourceSql());
+
+        if (batchSpec.getCustomDestSql() != null && !batchSpec.getCustomDestSql().trim().isEmpty()) {
+            validateSql(batchSpec.getCustomDestSql());
+        }
+
+        // Validate fields
+        for (MapField field : batchSpec.getFields()) {
+            if (field.getSourceField() == null || field.getSourceField().trim().isEmpty()) {
+                throw new DataSyncException("sourceField is required in field mapping");
+            }
+            if (field.getDestField() == null || field.getDestField().trim().isEmpty()) {
+                throw new DataSyncException("destField is required in field mapping");
+            }
+        }
+
+        log.info("Custom SQL BatchSpec validation passed");
     }
 
     /**
