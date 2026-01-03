@@ -10,6 +10,8 @@ spring:
     username: postgres
     password: postgres
     driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-init-sql: SET TIME ZONE 'UTC'
 
   jpa:
     hibernate:
@@ -17,3 +19,18 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: UTC
+
+# Custom datasource configuration for sync service
+datasource:
+  pipeline_source:
+    url: jdbc:postgresql://localhost:5432/pipeline_data
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  pipeline_dest:
+    url: jdbc:postgresql://localhost:5432/pipeline_data
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver

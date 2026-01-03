@@ -1,44 +1,50 @@
 package com.piplineData.loadService.entity;
 
-import jakarta.persistence.*;
-import lombok.*;
-import lombok.experimental.FieldDefaults;
 
+import jakarta.persistence.*;
+import lombok.Data;
 import java.time.LocalDateTime;
 
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
+@Data
 @Entity
 @Table(name = "dl_sync_log", schema = "sts")
-@FieldDefaults(level = AccessLevel.PRIVATE)
 public class SyncLog {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    String syncLogId;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "sync_log_id")
+    private Long syncLogId;
 
-    String dataObjectCode;
+    @Column(name = "data_obj_code", nullable = false, length = 250)
+    private String dataObjCode;
 
-    String syncType; // BATCH, STREAM
+    @Column(name = "sync_type", length = 50)
+    private String syncType; // BATCH / STREAM
 
-    Integer recordsFetched;
+    @Column(name = "records_fetched")
+    private Integer recordsFetched;
 
-    Integer recordsInserted;
+    @Column(name = "records_inserted")
+    private Integer recordsInserted;
 
-    Integer recordsUpdated;
+    @Column(name = "records_updated")
+    private Integer recordsUpdated;
 
-    Integer recordsDeleted;
+    @Column(name = "records_deleted")
+    private Integer recordsDeleted;
 
-    String status; // SUCCESS, FAILED, RUNNING
+    @Column(name = "status", length = 50)
+    private String status; // SUCCESS / FAILED / RUNNING
 
-    String errorMessage;
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
 
-    LocalDateTime startedAt;
+    @Column(name = "started_at")
+    private LocalDateTime startedAt;
 
-    LocalDateTime finishedAt;
+    @Column(name = "finished_at")
+    private LocalDateTime finishedAt;
 
-    Integer retryCount;
-
+    @Column(name = "retry_count")
+    private Integer retryCount = 0;
 }

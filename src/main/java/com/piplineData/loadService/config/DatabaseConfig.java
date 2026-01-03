@@ -1,34 +1,65 @@
 package com.piplineData.loadService.config;
 
+
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import lombok.AccessLevel;
-import lombok.experimental.FieldDefaults;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-
 import javax.sql.DataSource;
 import java.util.HashMap;
 import java.util.Map;
 
-@Configuration
 @Slf4j
-@FieldDefaults(level = AccessLevel.PACKAGE, makeFinal = true)
+@Configuration
 public class DatabaseConfig {
 
+    @Value("${spring.datasource.url}")
+    private String url;
+
+    @Value("${spring.datasource.username}")
+    private String username;
+
+    @Value("${spring.datasource.password}")
+    private String password;
+
+    @Value("${spring.datasource.driver-class-name}")
+    private String driverClassName;
+
+    // DataSource chính cho Destination DB (PostgreSQL)
     @Primary
     @Bean(name = "destinationDataSource")
-    @ConfigurationProperties(prefix = "spring.datasource")
-    public DataSource destinationDataSource(){
-        return new HikariDataSource();
+    public DataSource destinationDataSource() {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(url);
+        config.setUsername(username);
+        config.setPassword(password);
+        config.setDriverClassName(driverClassName);
+        config.setMaximumPoolSize(10);
+        config.setMinimumIdle(2);
+        config.setConnectionTimeout(30000);
+        config.setIdleTimeout(600000);
+        config.setMaxLifetime(1800000);
+        // Set timezone cho PostgreSQL
+        config.addDataSourceProperty("serverTimezone", "UTC");
+        config.addDataSourceProperty("useUnicode", "true");
+        config.addDataSourceProperty("characterEncoding", "UTF-8");
+        return new HikariDataSource(config);
     }
 
-    Map<String, DataSource> dynamicDataSources = new HashMap<>();
+    // Cache để lưu dynamic datasources cho Source DBs
+    private final Map<String, DataSource> dynamicDataSources = new HashMap<>();
 
-    //Tạo dynamic data source
+    /**
+     * Tạo DataSource động cho Source DB
+     * @param dbSource tên nguồn DB (ví dụ: "uit", "crm", "erp")
+     * @param url JDBC URL
+     * @param username username
+     * @param password password
+     * @param driverClassName driver class (ví dụ: oracle.jdbc.OracleDriver, org.postgresql.Driver)
+     */
     public DataSource createDynamicDataSource(String dbSource, String url,
                                               String username, String password,
                                               String driverClassName) {
@@ -56,12 +87,16 @@ public class DatabaseConfig {
         return dataSource;
     }
 
-    //Lấy datasource đã tạo
+    /**
+     * Lấy DataSource đã tạo trước đó
+     */
     public DataSource getDataSource(String dbSource) {
         return dynamicDataSources.get(dbSource);
     }
 
-    // Đóng dynamic data source
+    /**
+     * Đóng tất cả dynamic datasources
+     */
     public void closeAllDynamicDataSources() {
         dynamicDataSources.values().forEach(ds -> {
             if (ds instanceof HikariDataSource) {

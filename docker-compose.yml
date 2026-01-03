@@ -2,19 +2,39 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:15
+    image: postgres:16
     container_name: postgres_pipeline
     restart: always
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: pipeline_data
+      TZ: Asia/Ho_Chi_Minh
+      PGTZ: Asia/Ho_Chi_Minh
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - pipeline-net
+    command: postgres -c timezone=Asia/Ho_Chi_Minh
+
+  pgadmin:
+    image: dpage/pgadmin4:8.2
+    container_name: pgadmin_pipeline
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - pipeline-net
+    depends_on:
+      - postgres
 
 
 networks:
@@ -22,3 +42,4 @@ networks:
 
 volumes:
   postgres_data:
+  pgadmin_data:
