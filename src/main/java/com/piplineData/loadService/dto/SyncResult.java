@@ -2,6 +2,7 @@ package com.piplineData.loadService.dto;
 
 import lombok.Builder;
 import lombok.Data;
+import java.time.LocalDateTime;
 import java.util.Map;
 
 @Data
@@ -18,4 +19,6 @@ public class SyncResult {
     private Map<String, Object> entriesOnlyInDest;
     private String status;
     private String errorMessage;
+    private LocalDateTime startedAt;
+    private LocalDateTime finishedAt;
 }

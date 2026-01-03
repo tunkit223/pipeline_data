@@ -9,6 +9,7 @@ import com.piplineData.loadService.dto.BatchSpec;
 import com.piplineData.loadService.dto.MapField;
 import com.piplineData.loadService.dto.SyncResult;
 import com.piplineData.loadService.entity.DataObject;
+import com.piplineData.loadService.entity.DatabaseSourceConfig;
 import com.piplineData.loadService.entity.SyncLog;
 import com.piplineData.loadService.exception.DataSyncException;
 import com.piplineData.loadService.repository.DataObjectRepository;
@@ -20,8 +21,11 @@ import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import javax.sql.DataSource;
+import java.math.BigDecimal;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -36,24 +40,41 @@ public class DataSyncService {
     private final DatabaseConfig databaseConfig;
     private final RetryTemplate retryTemplate;
     private final ObjectMapper objectMapper;
-
-    @Value("${source.db.url:}")
-    private String sourceDbUrl;
-
-    @Value("${source.db.username:}")
-    private String sourceDbUsername;
-
-    @Value("${source.db.password:}")
-    private String sourceDbPassword;
-
-    @Value("${source.db.driver:org.postgresql.Driver}")
-    private String sourceDbDriver;
+    private final DatabaseSourceConfigService databaseSourceConfigService;
+    private final SimplifiedDataSyncService simplifiedDataSyncService;
 
     /**
      * Main method để sync dữ liệu
+     * Auto-detect simplified vs legacy BatchSpec structure
      */
     @Transactional
     public SyncResult syncData(String dataObjCode, Map<String, Object> runtimeParams) {
+
+        try {
+            // Load DataObject để check BatchSpec structure
+            DataObject dataObject = loadDataObject(dataObjCode);
+            BatchSpec batchSpec = batchSpecParser.parseBatchSpec(dataObject.getBatchSpec());
+
+            // Auto-detect structure và route đến service phù hợp
+            if (batchSpec.getSourceTable() != null && batchSpec.getDestTable() != null) {
+                log.info("Detected simplified BatchSpec structure, using SimplifiedDataSyncService");
+                return simplifiedDataSyncService.syncData(dataObjCode, runtimeParams);
+            } else {
+                log.info("Detected legacy BatchSpec structure, using legacy sync flow");
+                return syncDataLegacy(dataObjCode, runtimeParams);
+            }
+
+        } catch (Exception e) {
+            log.error("Failed to determine BatchSpec structure for {}: {}", dataObjCode, e.getMessage());
+            throw new DataSyncException("Sync failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Legacy sync method for old BatchSpec structure
+     */
+    @Transactional
+    public SyncResult syncDataLegacy(String dataObjCode, Map<String, Object> runtimeParams) {
 
         SyncLog syncLog = createSyncLog(dataObjCode);
 
@@ -182,17 +203,14 @@ public class DataSyncService {
     /**
      * Fetch data từ Source DB
      */
-    private List<Map<String, Object>> fetchSourceData(String dbSource, String sql) {
-        log.info("Fetching data from source DB: {}", dbSource);
+    private List<Map<String, Object>> fetchSourceData(String dbConfigCode, String sql) {
+        log.info("Fetching data from source DB: {}", dbConfigCode);
 
-        return dynamicDatabaseService.executeQueryOnSourceDb(
-                dbSource,
-                sql,
-                sourceDbUrl,
-                sourceDbUsername,
-                sourceDbPassword,
-                sourceDbDriver
-        );
+        // Lấy database config từ service
+        DatabaseSourceConfig dbConfig = databaseSourceConfigService.findByCode(dbConfigCode);
+        DataSource sourceDataSource = databaseSourceConfigService.createDataSource(dbConfig);
+
+        return dynamicDatabaseService.executeQueryOnDestDb(sourceDataSource, sql);
     }
 
     /**
@@ -276,17 +294,35 @@ public class DataSyncService {
             List<MapField> mapFields) {
 
         try {
+            // Map field name to MapField definition
+            Map<String, MapField> fieldDefMap = mapFields.stream()
+                    .collect(Collectors.toMap(MapField::getTo, mf -> mf));
+
             // Tách mapped fields và extra fields
             Map<String, Object> mappedData = new HashMap<>();
             Map<String, Object> extraData = new HashMap<>();
 
-            Set<String> mappedFieldNames = new HashSet<>();
-            mapFields.forEach(mf -> mappedFieldNames.add(mf.getFrom()));
+            Set<String> mappedTargetFieldNames = mapFields.stream()
+                    .map(MapField::getTo)
+                    .collect(Collectors.toSet());
 
+            // Xử lý mapping với type conversion
+            for (MapField mapField : mapFields) {
+                Object sourceValue = record.get(mapField.getFrom());
+                
+                // Apply default value nếu null
+                if (sourceValue == null && mapField.getDefaultValue() != null) {
+                    sourceValue = mapField.getDefaultValue();
+                }
+
+                // Type conversion
+                Object convertedValue = convertValueType(sourceValue, mapField.getDataType());
+                mappedData.put(mapField.getTo(), convertedValue);
+            }
+
+            // Các field không được map -> extra_data
             record.forEach((key, value) -> {
-                if (mappedFieldNames.contains(key)) {
-                    mappedData.put(key, value);
-                } else {
+                if (!mapFields.stream().anyMatch(mf -> mf.getFrom().equals(key))) {
                     extraData.put(key, value);
                 }
             });
@@ -295,7 +331,10 @@ public class DataSyncService {
             List<String> allFields = new ArrayList<>();
             allFields.addAll(keyFields);
             allFields.addAll(valueFields);
-            allFields.add("extra_data"); // cột JSONB cho dữ liệu còn lại
+            
+            if (!extraData.isEmpty()) {
+                allFields.add("extra_data"); // cột JSONB
+            }
 
             String columns = String.join(", ", allFields);
             String placeholders = String.join(", ", Collections.nCopies(allFields.size(), "?"));
@@ -305,18 +344,27 @@ public class DataSyncService {
 
             // Prepare parameters
             List<Object> params = new ArrayList<>();
-            keyFields.forEach(field -> params.add(mappedData.get(field)));
-            valueFields.forEach(field -> params.add(mappedData.get(field)));
-            params.add(objectMapper.writeValueAsString(extraData)); // convert to JSON
+            for (String field : keyFields) {
+                params.add(mappedData.get(field));
+            }
+            for (String field : valueFields) {
+                params.add(mappedData.get(field));
+            }
+            
+            if (!extraData.isEmpty()) {
+                // Convert extra data to JSON string
+                String extraDataJson = objectMapper.writeValueAsString(extraData);
+                params.add(extraDataJson);
+            }
 
             dynamicDatabaseService.executeInsert(destDataSource, sql, params.toArray());
 
             log.debug("Inserted record with keys: {}", keyFields.stream()
                     .map(field -> field + "=" + mappedData.get(field))
-                    .collect(java.util.stream.Collectors.joining(", ")));
+                    .collect(Collectors.joining(", ")));
 
         } catch (Exception e) {
-            log.error("Failed to insert record: {}", e.getMessage());
+            log.error("Failed to insert record: {}", e.getMessage(), e);
             throw new DataSyncException("Insert failed", e);
         }
     }
@@ -337,13 +385,23 @@ public class DataSyncService {
             Map<String, Object> mappedData = new HashMap<>();
             Map<String, Object> extraData = new HashMap<>();
 
-            Set<String> mappedFieldNames = new HashSet<>();
-            mapFields.forEach(mf -> mappedFieldNames.add(mf.getFrom()));
+            // Xử lý mapping với type conversion
+            for (MapField mapField : mapFields) {
+                Object sourceValue = record.get(mapField.getFrom());
+                
+                // Apply default value nếu null
+                if (sourceValue == null && mapField.getDefaultValue() != null) {
+                    sourceValue = mapField.getDefaultValue();
+                }
 
+                // Type conversion
+                Object convertedValue = convertValueType(sourceValue, mapField.getDataType());
+                mappedData.put(mapField.getTo(), convertedValue);
+            }
+
+            // Các field không được map -> extra_data
             record.forEach((key, value) -> {
-                if (mappedFieldNames.contains(key)) {
-                    mappedData.put(key, value);
-                } else {
+                if (!mapFields.stream().anyMatch(mf -> mf.getFrom().equals(key))) {
                     extraData.put(key, value);
                 }
             });
@@ -351,7 +409,10 @@ public class DataSyncService {
             // Build UPDATE SQL
             List<String> setClauses = new ArrayList<>();
             valueFields.forEach(field -> setClauses.add(field + " = ?"));
-            setClauses.add("extra_data = ?");
+            
+            if (!extraData.isEmpty()) {
+                setClauses.add("extra_data = ?");
+            }
 
             List<String> whereClauses = new ArrayList<>();
             keyMap.keySet().forEach(key -> whereClauses.add(key + " = ?"));
@@ -364,7 +425,12 @@ public class DataSyncService {
             // Prepare parameters
             List<Object> params = new ArrayList<>();
             valueFields.forEach(field -> params.add(mappedData.get(field)));
-            params.add(objectMapper.writeValueAsString(extraData));
+            
+            if (!extraData.isEmpty()) {
+                String extraDataJson = objectMapper.writeValueAsString(extraData);
+                params.add(extraDataJson);
+            }
+            
             keyMap.values().forEach(params::add);
 
             dynamicDatabaseService.executeUpdate(destDataSource, sql, params.toArray());
@@ -372,7 +438,7 @@ public class DataSyncService {
             log.debug("Updated record with keys: {}", keyMap);
 
         } catch (Exception e) {
-            log.error("Failed to update record: {}", e.getMessage());
+            log.error("Failed to update record: {}", e.getMessage(), e);
             throw new DataSyncException("Update failed", e);
         }
     }
@@ -433,9 +499,97 @@ public class DataSyncService {
     }
 
     /**
-     * Get sync history
+     * Get sync history by dataObjCode
      */
     public List<SyncLog> getSyncHistory(String dataObjCode) {
         return syncLogRepository.findByDataObjCodeOrderByStartedAtDesc(dataObjCode);
+    }
+
+    /**
+     * Get all sync history (all data objects)
+     */
+    public List<SyncLog> getAllSyncHistory() {
+        return syncLogRepository.findAllByOrderByStartedAtDesc();
+    }
+
+    /**
+     * Convert value sang type phù hợp với destination column
+     */
+    private Object convertValueType(Object value, String targetType) {
+        if (value == null) {
+            return null;
+        }
+
+        if (targetType == null || targetType.isEmpty()) {
+            return value; // Không convert
+        }
+
+        try {
+            String type = targetType.toUpperCase();
+            String valueStr = value.toString();
+
+            switch (type) {
+                case "INTEGER":
+                case "INT":
+                case "INT4":
+                    return Integer.valueOf(valueStr);
+
+                case "BIGINT":
+                case "INT8":
+                case "LONG":
+                    return Long.valueOf(valueStr);
+
+                case "DECIMAL":
+                case "NUMERIC":
+                    return new BigDecimal(valueStr);
+
+                case "FLOAT":
+                case "FLOAT4":
+                    return Float.valueOf(valueStr);
+
+                case "DOUBLE":
+                case "FLOAT8":
+                    return Double.valueOf(valueStr);
+
+                case "BOOLEAN":
+                case "BOOL":
+                    return Boolean.valueOf(valueStr);
+
+                case "VARCHAR":
+                case "TEXT":
+                case "STRING":
+                    return valueStr;
+
+                case "TIMESTAMP":
+                case "DATETIME":
+                    if (value instanceof Timestamp) {
+                        return value;
+                    }
+                    return Timestamp.valueOf(valueStr);
+
+                case "DATE":
+                    return java.sql.Date.valueOf(valueStr);
+
+                case "JSONB":
+                case "JSON":
+                    // Nếu đã là JSON string, return as-is
+                    if (valueStr.startsWith("{") || valueStr.startsWith("[")) {
+                        return valueStr;
+                    }
+                    // Convert object to JSON
+                    return objectMapper.writeValueAsString(value);
+
+                default:
+                    log.warn("Unknown target type: {}, returning original value", targetType);
+                    return value;
+            }
+
+        } catch (Exception e) {
+            log.error("Type conversion failed for value '{}' to type '{}': {}",
+                    value, targetType, e.getMessage());
+            throw new DataSyncException(
+                    String.format("Type conversion failed: %s to %s", value, targetType), e
+            );
+        }
     }
 }

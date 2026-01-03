@@ -5,9 +5,13 @@ import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
 
+/**
+ * Entity để lưu log quá trình đồng bộ dữ liệu
+ * Schema: pipeline_log
+ */
 @Data
 @Entity
-@Table(name = "dl_sync_log", schema = "sts")
+@Table(name = "sync_log", schema = "pipeline_log")
 public class SyncLog {
 
     @Id

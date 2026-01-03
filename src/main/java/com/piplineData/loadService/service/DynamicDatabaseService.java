@@ -18,53 +18,21 @@ public class DynamicDatabaseService {
     private final DatabaseConfig databaseConfig;
 
     /**
-     * Thực thi query trên Source DB động
-     * @param dbSource tên nguồn DB
-     * @param sql câu SQL cần thực thi
-     * @param dbUrl JDBC URL
-     * @param dbUsername username
-     * @param dbPassword password
-     * @param driverClassName driver class
+     * Thực thi query trên bất kỳ DataSource nào (Source hoặc Destination)
      */
-    public List<Map<String, Object>> executeQueryOnSourceDb(
-            String dbSource, String sql, String dbUrl,
-            String dbUsername, String dbPassword, String driverClassName) {
-
+    public List<Map<String, Object>> executeQueryOnDestDb(DataSource dataSource, String sql) {
         try {
-            DataSource dataSource = databaseConfig.createDynamicDataSource(
-                    dbSource, dbUrl, dbUsername, dbPassword, driverClassName
-            );
-
             JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
 
-            log.info("Executing query on source DB [{}]: {}", dbSource, sql);
+            log.info("Executing query: {}", sql);
             List<Map<String, Object>> results = jdbcTemplate.queryForList(sql);
-            log.info("Fetched {} records from source DB [{}]", results.size(), dbSource);
+            log.info("Fetched {} records", results.size());
 
             return results;
 
         } catch (Exception e) {
-            log.error("Failed to execute query on source DB [{}]: {}", dbSource, e.getMessage());
-            throw new DataSyncException("Failed to fetch data from source DB: " + dbSource, e);
-        }
-    }
-
-    /**
-     * Thực thi query trên Destination DB
-     */
-    public List<Map<String, Object>> executeQueryOnDestDb(DataSource destDataSource, String sql) {
-        try {
-            JdbcTemplate jdbcTemplate = new JdbcTemplate(destDataSource);
-
-            log.info("Executing query on destination DB: {}", sql);
-            List<Map<String, Object>> results = jdbcTemplate.queryForList(sql);
-            log.info("Fetched {} records from destination DB", results.size());
-
-            return results;
-
-        } catch (Exception e) {
-            log.error("Failed to execute query on destination DB: {}", e.getMessage());
-            throw new DataSyncException("Failed to fetch data from destination DB", e);
+            log.error("Failed to execute query: {}", e.getMessage());
+            throw new DataSyncException("Failed to fetch data", e);
         }
     }
 

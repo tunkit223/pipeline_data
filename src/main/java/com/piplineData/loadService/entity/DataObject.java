@@ -6,21 +6,33 @@ import lombok.Data;
 import org.hibernate.annotations.Type;
 import io.hypersistence.utils.hibernate.type.json.JsonBinaryType;
 
+import java.time.LocalDateTime;
+
+/**
+ * Entity để khai báo Data Object - đối tượng dữ liệu cần đồng bộ
+ * Schema: pipeline_config
+ */
 @Data
 @Entity
-@Table(name = "dl_data_obj", schema = "sts")
+@Table(name = "data_object", schema = "pipeline_config")
 public class DataObject {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "data_obj_id")
-    private Integer dataObjId;
+    private Long dataObjId;
 
     @Column(name = "data_obj_code", nullable = false, unique = true, length = 250)
     private String dataObjCode;
 
     @Column(name = "data_obj_name", nullable = false, length = 500)
     private String dataObjName;
+
+    /**
+     * Reference đến Database Source Config
+     */
+    @Column(name = "source_db_config_code", length = 100)
+    private String sourceDbConfigCode;
 
     @Type(JsonBinaryType.class)
     @Column(name = "streamspec", columnDefinition = "jsonb")
@@ -42,6 +54,26 @@ public class DataObject {
     @Column(name = "data_obj_note", columnDefinition = "TEXT")
     private String dataObjNote;
 
+    @Column(name = "sync_mode", length = 50)
+    private String syncMode; // BATCH, EVENT, STREAMING
+
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
 }

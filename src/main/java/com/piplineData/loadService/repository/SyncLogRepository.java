@@ -10,4 +10,5 @@ import java.util.List;
 public interface SyncLogRepository extends JpaRepository<SyncLog, String> {
     List<SyncLog> findByDataObjCodeOrderByStartedAtDesc(String dataObjCode);
     List<SyncLog> findByStatusOrderByStartedAtDesc(String status);
+    List<SyncLog> findAllByOrderByStartedAtDesc();
 }

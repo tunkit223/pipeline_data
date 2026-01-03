@@ -5,9 +5,32 @@ import lombok.Data;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * BatchSpec DTO - Simplified version for API
+ * Cấu trúc đơn giản hơn để dễ sử dụng từ API
+ */
 @Data
 public class BatchSpec {
 
+    @JsonProperty("sourceTable")
+    private String sourceTable;
+
+    @JsonProperty("destTable")
+    private String destTable;
+
+    @JsonProperty("primaryKeys")
+    private List<String> primaryKeys;
+
+    @JsonProperty("fields")
+    private List<MapField> fields;
+
+    @JsonProperty("whereCondition")
+    private String whereCondition;
+
+    @JsonProperty("orderBy")
+    private String orderBy;
+
+    // Legacy support - old structure
     @JsonProperty("data_obj_code")
     private String dataObjCode;
 

@@ -26,9 +26,11 @@ public class DataSyncController {
     @PostMapping("/execute")
     public ResponseEntity<SyncResult> executeSyncspringboot(@RequestBody Map<String, Object> request) {
 
-        String dataObjCode = (String) request.get("data_obj_code");
+        // Support both naming conventions
+        String dataObjCode = (String) request.getOrDefault("dataObjCode", 
+                                request.get("data_obj_code"));
 
-        log.info("Received sync request for data_obj_code: {}", dataObjCode);
+        log.info("Received sync request for dataObjCode: {}", dataObjCode);
         log.debug("Request payload: {}", request);
 
         // Extract runtime parameters
@@ -59,15 +61,36 @@ public class DataSyncController {
     }
 
     /**
-     * Get sync history
+     * Get sync history by path variable
      * GET /api/v1/data-sync/history/{dataObjCode}
      */
     @GetMapping("/history/{dataObjCode}")
-    public ResponseEntity<List<SyncLog>> getSyncHistory(@PathVariable String dataObjCode) {
+    public ResponseEntity<List<SyncLog>> getSyncHistoryByPath(@PathVariable String dataObjCode) {
 
         log.info("Fetching sync history for: {}", dataObjCode);
 
         List<SyncLog> history = dataSyncService.getSyncHistory(dataObjCode);
+
+        return ResponseEntity.ok(history);
+    }
+
+    /**
+     * Get sync history by query parameter
+     * GET /api/v1/data-sync/history?dataObjCode=SYNC_ORDERS
+     * GET /api/v1/data-sync/history (get all)
+     */
+    @GetMapping("/history")
+    public ResponseEntity<List<SyncLog>> getSyncHistoryByQuery(
+            @RequestParam(required = false) String dataObjCode) {
+
+        log.info("Fetching sync history, dataObjCode: {}", dataObjCode);
+
+        List<SyncLog> history;
+        if (dataObjCode != null && !dataObjCode.isEmpty()) {
+            history = dataSyncService.getSyncHistory(dataObjCode);
+        } else {
+            history = dataSyncService.getAllSyncHistory();
+        }
 
         return ResponseEntity.ok(history);
     }
