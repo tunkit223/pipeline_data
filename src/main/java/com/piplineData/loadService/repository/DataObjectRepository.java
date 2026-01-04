@@ -1,4 +1,20 @@
 package com.piplineData.loadService.repository;
 
-public class DataObjectRepository {
+import com.piplineData.loadService.entity.DataObject;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface DataObjectRepository extends JpaRepository<DataObject, Long> {
+    
+    Optional<DataObject> findByDataObjCode(String dataObjCode);
+    
+    Optional<DataObject> findByDataObjCodeAndIsActiveTrue(String dataObjCode);
+    
+    List<DataObject> findAllByIsActiveTrue();
+    
+    boolean existsByDataObjCode(String dataObjCode);
 }

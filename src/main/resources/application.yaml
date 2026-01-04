@@ -3,13 +3,20 @@ server:
 
 spring:
   application:
-    name: pipeline_data
+    name: pipeline-data-layer1
 
   datasource:
     url: jdbc:postgresql://localhost:5432/pipeline_data
     username: postgres
     password: postgres
     driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-init-sql: SET TIME ZONE 'UTC'
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
 
   jpa:
     hibernate:
@@ -17,3 +24,33 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: UTC
+        format_sql: true
+    show-sql: false
+
+# Logging configuration
+logging:
+  level:
+    com.piplineData.loadService: INFO
+    org.springframework.jdbc: DEBUG
+    org.hibernate.SQL: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Retry configuration
+retry:
+  maxAttempts: 3
+  backoffDelay: 2000
+
+# Custom configuration
+pipeline:
+  # Destination database (chính là database hiện tại)
+  destination:
+    schema: pipeline_data
+  
+  # Batch processing configuration
+  batch:
+    chunkSize: 1000
+    fetchSize: 500
