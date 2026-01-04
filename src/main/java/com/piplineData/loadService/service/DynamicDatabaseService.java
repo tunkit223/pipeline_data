@@ -1,6 +1,7 @@
 package com.piplineData.loadService.service;
 
 import com.piplineData.loadService.config.DatabaseConfig;
+import com.piplineData.loadService.entity.DatabaseSourceConfig;
 import com.piplineData.loadService.exception.DataSyncException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,16 @@ import java.util.Map;
 public class DynamicDatabaseService {
 
     private final DatabaseConfig databaseConfig;
+    private final DatabaseSourceConfigService databaseSourceConfigService;
+
+    /**
+     * Lấy DataSource từ config code
+     */
+    public DataSource getDataSource(String configCode) {
+        log.info("Getting DataSource for config: {}", configCode);
+        DatabaseSourceConfig config = databaseSourceConfigService.findByCode(configCode);
+        return databaseSourceConfigService.createDataSource(config);
+    }
 
     /**
      * Thực thi query trên bất kỳ DataSource nào (Source hoặc Destination)

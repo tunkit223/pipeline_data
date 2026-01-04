@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -108,18 +109,35 @@ public class DataSyncController {
 
     /**
      * Extract runtime parameters từ request
+     * Hỗ trợ 2 formats:
+     * 1. Nested object: { "runtimeParams": { "p_key": "value" } }
+     * 2. Flat structure: { "p_key": "value", "fromdate": "..." }
      */
     private Map<String, Object> extractRuntimeParams(Map<String, Object> request) {
-        Map<String, Object> params = Map.of(
-                "fromdate", request.getOrDefault("fromdate", ""),
-                "todate", request.getOrDefault("todate", ""),
-                "company_id", request.getOrDefault("company_id", ""),
-                "p_starttime", request.getOrDefault("p_starttime", ""),
-                "p_endtime", request.getOrDefault("p_endtime", ""),
-                "p_company_id", request.getOrDefault("p_company_id", ""),
-                "p_companyId", request.getOrDefault("p_companyId", "")
-        );
+        Map<String, Object> params = new HashMap<>();
+        
+        // Check if runtimeParams object exists (nested format)
+        if (request.containsKey("runtimeParams")) {
+            Object runtimeParamsObj = request.get("runtimeParams");
+            if (runtimeParamsObj instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> nestedParams = (Map<String, Object>) runtimeParamsObj;
+                params.putAll(nestedParams);
+                log.info("Extracted runtime parameters from nested 'runtimeParams' object: {}", params);
+                return params;
+            }
+        }
+        
+        // Fallback: Extract known parameter names from flat structure (legacy support)
+        params.put("fromdate", request.getOrDefault("fromdate", ""));
+        params.put("todate", request.getOrDefault("todate", ""));
+        params.put("company_id", request.getOrDefault("company_id", ""));
+        params.put("p_starttime", request.getOrDefault("p_starttime", ""));
+        params.put("p_endtime", request.getOrDefault("p_endtime", ""));
+        params.put("p_company_id", request.getOrDefault("p_company_id", ""));
+        params.put("p_companyId", request.getOrDefault("p_companyId", ""));
 
+        log.debug("Extracted runtime parameters from flat structure: {}", params);
         return params;
     }
 }
