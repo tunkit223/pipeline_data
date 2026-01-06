@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * DTO để sync Airflow Variable
@@ -25,6 +26,7 @@ public class AirflowVariableDto {
     private Long calculatedProgId;
     private Long calculatedPeriodId;
     private String metaProcessCode;
+    private Map<String, Object> businessParams;
     
     @Data
     @Builder

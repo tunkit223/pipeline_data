@@ -101,8 +101,9 @@ public class UceExecutionService {
 
             // 4. Execute SQL
             int rowsAffected = 0;
+            List<Map<String, Object>> selectorResults = null;
 
-            // Execute Selector (if exists) - usually for creating result tables
+            // Execute Selector (if exists) - SELECT data for transformation
             if (selectorFinal != null && !selectorFinal.trim().isEmpty()) {
                 log.info("Executing Selector SQL");
                 
@@ -113,14 +114,13 @@ public class UceExecutionService {
                     rowsAffected = sqlExecutorService.executeUpdate(selectorFinal);
                     log.info("Selector (DDL/DML) affected {} rows", rowsAffected);
                 } else {
-                    // Execute as SELECT query
-                    List<Map<String, Object>> selectorResults = sqlExecutorService.executeSelect(selectorFinal);
+                    // Execute as SELECT query to get data for processing
+                    selectorResults = sqlExecutorService.executeSelect(selectorFinal);
                     log.info("Selector returned {} rows", selectorResults.size());
-                    rowsAffected = selectorResults.size();
                 }
             }
 
-            // Execute Processor (if exists)
+            // Execute Processor (if exists) - Transform data
             if (processorFinal != null && !processorFinal.trim().isEmpty()) {
                 log.info("Executing Processor SQL");
                 int processorRows = sqlExecutorService.executeUpdate(processorFinal);
@@ -128,12 +128,22 @@ public class UceExecutionService {
                 rowsAffected += processorRows;
             }
 
-            // Execute Insertor (if exists)
+            // Execute Insertor (if exists) - Load data into target
             if (insertorFinal != null && !insertorFinal.trim().isEmpty()) {
                 log.info("Executing Insertor SQL");
-                int insertorRows = sqlExecutorService.executeUpdate(insertorFinal);
-                log.info("Insertor affected {} rows", insertorRows);
-                rowsAffected += insertorRows;
+                
+                // If we have selector results, use PreparedStatement batch insert
+                if (selectorResults != null && !selectorResults.isEmpty()) {
+                    log.info("Batch inserting {} rows from selector results", selectorResults.size());
+                    int insertCount = sqlExecutorService.executeBatchInsert(insertorFinal, selectorResults);
+                    log.info("Insertor affected {} rows", insertCount);
+                    rowsAffected += insertCount;
+                } else {
+                    // Direct INSERT/UPDATE statement
+                    int insertorRows = sqlExecutorService.executeUpdate(insertorFinal);
+                    log.info("Insertor affected {} rows", insertorRows);
+                    rowsAffected += insertorRows;
+                }
             }
 
             // 5. Update Task Execution status

@@ -11,19 +11,20 @@ import java.util.regex.Pattern;
 
 /**
  * Service để render SQL template với runtime parameters
- * Hỗ trợ cú pháp {{param_name}}
+ * Hỗ trợ cú pháp {{param_name}} và ${param_name}
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class TemplateRenderService {
 
-    private static final Pattern PARAM_PATTERN = Pattern.compile("\\{\\{\\s*(\\w+)\\s*\\}\\}");
+    // Support both {{param}} and ${param} syntax
+    private static final Pattern PARAM_PATTERN = Pattern.compile("(\\{\\{\\s*(\\w+)\\s*\\}\\}|\\$\\{\\s*(\\w+)\\s*\\})");
 
     /**
      * Render SQL template với params
      * 
-     * @param template SQL template với {{param_name}}
+     * @param template SQL template với {{param_name}} hoặc ${param_name}
      * @param params Map of parameter values
      * @return Rendered SQL
      */
@@ -42,12 +43,13 @@ public class TemplateRenderService {
         Matcher matcher = PARAM_PATTERN.matcher(template);
 
         while (matcher.find()) {
-            String paramName = matcher.group(1);
+            // Group 2 for {{param}}, Group 3 for ${param}
+            String paramName = matcher.group(2) != null ? matcher.group(2) : matcher.group(3);
             Object value = params.get(paramName);
 
             if (value == null) {
                 log.warn("Parameter '{}' not found in params, keeping placeholder", paramName);
-                matcher.appendReplacement(result, Matcher.quoteReplacement("{{" + paramName + "}}"));
+                matcher.appendReplacement(result, Matcher.quoteReplacement(matcher.group(0)));
             } else {
                 String replacement = formatValue(value);
                 matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
@@ -68,19 +70,9 @@ public class TemplateRenderService {
             return "NULL";
         }
 
-        if (value instanceof String) {
-            // Escape single quotes in strings
-            String strValue = ((String) value).replace("'", "''");
-            return "'" + strValue + "'";
-        }
-
-        if (value instanceof Number || value instanceof Boolean) {
-            return value.toString();
-        }
-
-        // Default: convert to string and quote
-        String strValue = value.toString().replace("'", "''");
-        return "'" + strValue + "'";
+        // Don't auto-add quotes - let template handle SQL syntax
+        // This allows templates to use '${param}' or ${param} as needed
+        return value.toString();
     }
 
     /**

@@ -62,7 +62,8 @@ public class MetadataSchemaService {
                     department_id BIGINT,
                     meta_proc_note TEXT,
                     is_active BOOLEAN NOT NULL DEFAULT true,
-                    metadata_schema VARCHAR(100) NOT NULL
+                    metadata_schema VARCHAR(100) NOT NULL,
+                    schedule_interval VARCHAR(50)
                 )
                 """, schemaName),
             
@@ -91,12 +92,18 @@ public class MetadataSchemaService {
             String.format("""
                 CREATE TABLE IF NOT EXISTS %s.uce_process (
                     id BIGSERIAL PRIMARY KEY,
+                    proc_id BIGINT,
+                    proc_code VARCHAR(250) UNIQUE,
                     meta_proc_code VARCHAR(250) NOT NULL,
+                    calc_prog_id BIGINT,
+                    calc_period_id BIGINT,
                     process_instance_code VARCHAR(100) NOT NULL UNIQUE,
                     process_instance_name VARCHAR(255),
                     runtime_params TEXT,
                     status VARCHAR(50) DEFAULT 'CREATED',
                     dest_schema VARCHAR(100),
+                    is_lasted BOOLEAN DEFAULT true,
+                    proc_note TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (meta_proc_code) REFERENCES %s.uce_meta_process(meta_proc_code)
@@ -106,22 +113,23 @@ public class MetadataSchemaService {
             // uce_task
             String.format("""
                 CREATE TABLE IF NOT EXISTS %s.uce_task (
-                    id BIGSERIAL PRIMARY KEY,
-                    process_id BIGINT NOT NULL,
+                    task_id BIGSERIAL PRIMARY KEY,
+                    task_code VARCHAR(250) NOT NULL UNIQUE,
+                    proc_code VARCHAR(250) NOT NULL,
                     meta_task_code VARCHAR(250) NOT NULL,
-                    task_instance_code VARCHAR(100) NOT NULL,
-                    task_instance_name VARCHAR(255),
-                    task_order INTEGER,
-                    depends_on_tasks TEXT,
-                    selector_sql TEXT,
-                    action_sql TEXT,
-                    status VARCHAR(50) DEFAULT 'PENDING',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (process_id) REFERENCES %s.uce_process(id) ON DELETE CASCADE,
+                    meta_proc_code VARCHAR(250) NOT NULL,
+                    calc_prog_id BIGINT,
+                    calc_period_id BIGINT,
+                    selector_biz TEXT,
+                    processor_biz TEXT,
+                    insertor_biz TEXT,
+                    task_note TEXT,
+                    status VARCHAR(100) DEFAULT 'READY',
+                    FOREIGN KEY (proc_code) REFERENCES %s.uce_process(proc_code),
+                    FOREIGN KEY (meta_proc_code) REFERENCES %s.uce_meta_process(meta_proc_code),
                     FOREIGN KEY (meta_task_code) REFERENCES %s.uce_meta_task(meta_task_code)
                 )
-                """, schemaName, schemaName, schemaName),
+                """, schemaName, schemaName, schemaName, schemaName),
             
             // uce_proc_exec
             String.format("""

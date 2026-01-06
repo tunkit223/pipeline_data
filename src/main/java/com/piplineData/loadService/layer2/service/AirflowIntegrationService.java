@@ -151,7 +151,7 @@ public class AirflowIntegrationService {
     private UceProcess queryProcessFromSchema(String schema, String procCode) {
         String sql = String.format("""
             SELECT proc_id, proc_code, meta_proc_code, calc_prog_id, calc_period_id, 
-                   status, is_lasted, proc_note
+                   runtime_params, status, is_lasted, proc_note
             FROM %s.uce_process
             WHERE proc_code = ?
             """, schema);
@@ -163,6 +163,7 @@ public class AirflowIntegrationService {
             process.setMetaProcCode(rs.getString("meta_proc_code"));
             process.setCalcProgId(rs.getLong("calc_prog_id"));
             process.setCalcPeriodId(rs.getLong("calc_period_id"));
+            process.setRuntimeParams(rs.getString("runtime_params"));
             process.setStatus(rs.getString("status"));
             process.setIsLasted(rs.getBoolean("is_lasted"));
             process.setProcNote(rs.getString("proc_note"));
@@ -582,28 +583,45 @@ public class AirflowIntegrationService {
             List<UceTask> tasks = queryTasksFromSchema(schema, procCode);
             log.info("Found {} Tasks for Process {}", tasks.size(), procCode);
 
-            // 5. Query Meta Tasks to get dependencies
+            // 5. Query Meta Tasks to get task_order
             List<UceMetaTask> metaTasks = queryMetaTasksFromSchema(metaSchema, metaProcCode);
+            Map<String, Integer> taskOrderMap = new HashMap<>();
+            for (UceMetaTask mt : metaTasks) {
+                taskOrderMap.put(mt.getMetaTaskCode(), mt.getTaskOrder());
+            }
             
-            // 6. Build Task Definitions with dependencies
+            // 6. Sort tasks by task_order for sequential dependency
+            tasks.sort((t1, t2) -> {
+                String meta1 = extractMetaTaskCode(t1.getTaskCode(), procCode);
+                String meta2 = extractMetaTaskCode(t2.getTaskCode(), procCode);
+                Integer order1 = taskOrderMap.getOrDefault(meta1, 999);
+                Integer order2 = taskOrderMap.getOrDefault(meta2, 999);
+                return order1.compareTo(order2);
+            });
+            
+            // 7. Build Task Definitions with auto-sequential dependencies
             List<AirflowVariableDto.TaskDefinition> taskDefs = new ArrayList<>();
+            String previousTaskCode = null;
             
             for (UceTask task : tasks) {
                 String metaTaskCode = extractMetaTaskCode(task.getTaskCode(), procCode);
-                
-                // Find corresponding Meta Task for dependencies
                 UceMetaTask metaTask = queryMetaTaskFromSchema(metaSchema, metaTaskCode);
                 
                 List<String> dependsOn = new ArrayList<>();
+                
+                // Priority 1: Use explicit pre_meta_task_codelist if exists
                 if (metaTask != null && metaTask.getPreMetaTaskCodelist() != null 
                     && !metaTask.getPreMetaTaskCodelist().trim().isEmpty()) {
                     
                     String[] deps = metaTask.getPreMetaTaskCodelist().split(",");
                     for (String dep : deps) {
-                        // Convert meta task code to actual task code
                         String depTaskCode = procCode + "_" + dep.trim();
                         dependsOn.add(depTaskCode);
                     }
+                } 
+                // Priority 2: Auto-sequential - depend on previous task by task_order
+                else if (previousTaskCode != null) {
+                    dependsOn.add(previousTaskCode);
                 }
 
                 AirflowVariableDto.TaskDefinition taskDef = AirflowVariableDto.TaskDefinition.builder()
@@ -613,9 +631,21 @@ public class AirflowIntegrationService {
                     .build();
 
                 taskDefs.add(taskDef);
+                previousTaskCode = task.getTaskCode(); // Remember for next task
             }
 
             // 7. Build Airflow Variable DTO
+            // Get businessParams from process runtime_params
+            Map<String, Object> businessParams = null;
+            try {
+                if (process.getRuntimeParams() != null && !process.getRuntimeParams().isEmpty()) {
+                    businessParams = objectMapper.readValue(process.getRuntimeParams(), 
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                }
+            } catch (Exception e) {
+                log.warn("Could not parse runtime_params for {}: {}", procCode, e.getMessage());
+            }
+            
             AirflowVariableDto variableDto = AirflowVariableDto.builder()
                 .tasks(taskDefs)
                 .httpConnId(connection.getConnectionName())
@@ -625,6 +655,7 @@ public class AirflowIntegrationService {
                 .calculatedProgId(process.getCalcProgId())
                 .calculatedPeriodId(process.getCalcPeriodId())
                 .metaProcessCode(metaProcCode)
+                .businessParams(businessParams)
                 .build();
 
             // 8. Generate unique DAG ID and Variable name

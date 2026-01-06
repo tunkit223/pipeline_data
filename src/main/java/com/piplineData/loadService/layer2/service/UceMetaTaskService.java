@@ -94,9 +94,9 @@ public class UceMetaTaskService {
             request.getTaskType(),
             request.getPreMetaTaskCodelist(),
             request.getPostMetaTaskCodelist(),
-            request.getSqlTemplate(),
-            null, // processor
-            null, // insertor
+            request.getSelector() != null ? request.getSelector() : request.getSqlTemplate(),
+            request.getProcessor(),
+            request.getInsertor(),
             request.getMetaTaskNote(),
             true, // is_active
             isStarting,

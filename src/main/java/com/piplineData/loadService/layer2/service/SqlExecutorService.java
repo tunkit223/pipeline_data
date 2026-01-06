@@ -112,4 +112,111 @@ public class SqlExecutorService {
             || trimmed.startsWith("DELETE")
             || trimmed.startsWith("WITH");
     }
+
+    /**
+     * Execute batch INSERT using PreparedStatement
+     * Automatically creates table if not exists and inserts data from selector results
+     * 
+     * @param insertSql INSERT statement with placeholders (?, ?, ...)
+     * @param selectorResults Data rows from selector query
+     * @return Number of rows inserted
+     */
+    public int executeBatchInsert(String insertSql, List<Map<String, Object>> selectorResults) {
+        if (selectorResults == null || selectorResults.isEmpty()) {
+            log.warn("No data to insert");
+            return 0;
+        }
+
+        log.info("Executing batch insert for {} rows", selectorResults.size());
+        
+        try {
+            // Extract table name and create table if needed
+            String tableName = extractTableName(insertSql);
+            if (tableName != null && !tableName.isEmpty()) {
+                // Get column names from first row
+                Map<String, Object> firstRow = selectorResults.get(0);
+                createTableIfNotExists(tableName, firstRow);
+            }
+            
+            // Execute batch insert
+            return jdbcTemplate.batchUpdate(insertSql, selectorResults, selectorResults.size(),
+                (ps, row) -> {
+                    int index = 1;
+                    for (Object value : row.values()) {
+                        ps.setObject(index++, value);
+                    }
+                }).length;
+        } catch (Exception e) {
+            log.error("Failed to execute batch insert: {}", e.getMessage(), e);
+            throw new RuntimeException("Batch insert failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Extract table name from INSERT statement
+     */
+    private String extractTableName(String insertSql) {
+        String upper = insertSql.trim().toUpperCase();
+        if (!upper.startsWith("INSERT INTO")) {
+            return null;
+        }
+        
+        int intoIndex = upper.indexOf("INTO");
+        int valuesIndex = upper.indexOf("VALUES");
+        if (valuesIndex < 0) valuesIndex = upper.indexOf("(");
+        
+        if (intoIndex > 0 && valuesIndex > intoIndex) {
+            String tablePart = insertSql.substring(intoIndex + 4, valuesIndex).trim();
+            // Remove column list if exists
+            int parenIndex = tablePart.indexOf('(');
+            if (parenIndex > 0) {
+                tablePart = tablePart.substring(0, parenIndex).trim();
+            }
+            return tablePart;
+        }
+        
+        return null;
+    }
+
+    /**
+     * Create table if not exists based on first row data types
+     */
+    private void createTableIfNotExists(String tableName, Map<String, Object> sampleRow) {
+        log.info("Creating table if not exists: {}", tableName);
+        
+        StringBuilder createTableSql = new StringBuilder();
+        createTableSql.append("CREATE TABLE IF NOT EXISTS ").append(tableName).append(" (");
+        
+        boolean first = true;
+        for (Map.Entry<String, Object> entry : sampleRow.entrySet()) {
+            if (!first) createTableSql.append(", ");
+            first = false;
+            
+            String columnName = entry.getKey();
+            String dataType = inferDataType(entry.getValue());
+            createTableSql.append(columnName).append(" ").append(dataType);
+        }
+        
+        createTableSql.append(")");
+        
+        log.debug("CREATE TABLE SQL: {}", createTableSql);
+        jdbcTemplate.execute(createTableSql.toString());
+        log.info("Table {} created or already exists", tableName);
+    }
+
+    /**
+     * Infer PostgreSQL data type from Java object
+     */
+    private String inferDataType(Object value) {
+        if (value == null) return "TEXT";
+        
+        if (value instanceof Integer) return "INTEGER";
+        if (value instanceof Long) return "BIGINT";
+        if (value instanceof Double || value instanceof Float || value instanceof java.math.BigDecimal) return "NUMERIC(18,2)";
+        if (value instanceof Boolean) return "BOOLEAN";
+        if (value instanceof java.sql.Date || value instanceof java.util.Date) return "TIMESTAMP";
+        
+        return "TEXT";
+    }
 }
+

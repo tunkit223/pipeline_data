@@ -1,5 +1,6 @@
 package com.piplineData.loadService.layer2.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.piplineData.loadService.layer2.dto.ProcessCreationResult;
 import com.piplineData.loadService.layer2.entity.UceMetaTask;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ public class UceProcessService {
 
     private final TemplateRenderService templateRenderService;
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
     /**
      * Helper: Tìm schema chứa Meta Process
@@ -122,17 +124,29 @@ public class UceProcessService {
         jdbcTemplate.update(updatePreviousSQL, metaProcCode);
 
         // 4. Create Process in dynamic schema using JdbcTemplate
+        // Convert businessParams to JSON string
+        String runtimeParamsJson = null;
+        try {
+            if (businessParams != null && !businessParams.isEmpty()) {
+                runtimeParamsJson = objectMapper.writeValueAsString(businessParams);
+            }
+        } catch (Exception e) {
+            log.warn("Could not serialize businessParams: {}", e.getMessage());
+        }
+        
         String insertProcessSQL = String.format("""
             INSERT INTO %s.uce_process 
-            (proc_code, meta_proc_code, calc_prog_id, calc_period_id, status, is_lasted)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (proc_code, process_instance_code, meta_proc_code, calc_prog_id, calc_period_id, runtime_params, status, is_lasted)
+            VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?)
             """, schema);
         
         jdbcTemplate.update(insertProcessSQL,
             procCode,
+            procCode,  // Use proc_code as process_instance_code
             metaProcCode,
             calcProgId,
             calcPeriodId,
+            runtimeParamsJson,
             "READY",
             true
         );
@@ -162,16 +176,11 @@ public class UceProcessService {
         for (UceMetaTask metaTask : metaTasks) {
             String taskCode = generateTaskCode(procCode, metaTask.getMetaTaskCode());
             
-            // Render SQL templates
-            String selectorBiz = metaTask.getSelector() != null 
-                ? templateRenderService.render(metaTask.getSelector(), businessParams) 
-                : null;
-            String processorBiz = metaTask.getProcessor() != null 
-                ? templateRenderService.render(metaTask.getProcessor(), businessParams) 
-                : null;
-            String insertorBiz = metaTask.getInsertor() != null 
-                ? templateRenderService.render(metaTask.getInsertor(), businessParams) 
-                : null;
+            // KHÔNG render template khi tạo task - sẽ render khi execute với runtime params
+            // Lưu template gốc từ meta task để có thể render với params khác nhau mỗi lần execute
+            String selectorBiz = metaTask.getSelector();
+            String processorBiz = metaTask.getProcessor();
+            String insertorBiz = metaTask.getInsertor();
             
             jdbcTemplate.update(insertTaskSQL,
                 taskCode,

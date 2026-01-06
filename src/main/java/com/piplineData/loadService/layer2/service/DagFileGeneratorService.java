@@ -109,7 +109,7 @@ default_args = {
     'retries': 0
 }
 
-def call_http_task(task_def, process_code, http_conn_id, company_id, brand_id, calculated_prog_id, calculated_period_id, meta_process_code):
+def call_http_task(task_def, process_code, http_conn_id, company_id, brand_id, calculated_prog_id, calculated_period_id, meta_process_code, business_params):
     \"\"\"Thực hiện gọi API HTTP.\"\"\"
     def _inner(**context):
         dag_conf = context.get("dag_run").conf or {}
@@ -132,7 +132,8 @@ def call_http_task(task_def, process_code, http_conn_id, company_id, brand_id, c
               "meta_process_code": meta_process_code,
               "process_code": process_code,
               "task_code": task_def["task_code"],
-              "process_exec_code": process_exec_code
+              "process_exec_code": process_exec_code,
+              "runtime_params": business_params if business_params else {}
         }
         print(f"http_conn_id = {http_conn_id}")
         print(f"▶️ Gọi {task_def['endpoint']} với payload: {payload}")
@@ -177,6 +178,7 @@ with DAG(
     calculated_prog_id = variable_data.get("calculatedProgId", variable_data.get("calculated_prog_id", ""))
     calculated_period_id = variable_data.get("calculatedPeriodId", variable_data.get("calculated_period_id", ""))
     meta_process_code = variable_data.get("metaProcessCode", variable_data.get("meta_process_code", ""))
+    business_params = variable_data.get("businessParams", variable_data.get("business_params", {}))
 
     http_tasks = {}
 
@@ -194,7 +196,7 @@ with DAG(
         
         http_tasks[task_code] = PythonOperator(
             task_id=task_code,
-            python_callable=call_http_task(task_def, process_code, http_conn_id, company_id, brand_id, calculated_prog_id, calculated_period_id, meta_process_code),
+            python_callable=call_http_task(task_def, process_code, http_conn_id, company_id, brand_id, calculated_prog_id, calculated_period_id, meta_process_code, business_params),
             provide_context=True,
         )
 

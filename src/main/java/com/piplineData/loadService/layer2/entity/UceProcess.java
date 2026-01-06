@@ -33,6 +33,9 @@ public class UceProcess {
     @Column(name = "proc_note", columnDefinition = "TEXT")
     private String procNote;
 
+    @Column(name = "runtime_params", columnDefinition = "TEXT")
+    private String runtimeParams;
+
     @Column(name = "status", length = 100)
     private String status = "READY"; // READY / RUNNING / SUCCESS / FAILED
 
