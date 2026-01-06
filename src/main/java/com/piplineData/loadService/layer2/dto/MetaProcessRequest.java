@@ -15,4 +15,17 @@ public class MetaProcessRequest {
     private Long departmentId;
     private String metaProcNote;
     private Boolean isActive = true;
+    
+    /**
+     * Schema để lưu metadata của tiến trình này
+     * Ví dụ: "hr_calc", "finance_calc", "test_dynamic_schema"
+     * Required field - must be specified when creating Meta Process
+     */
+    private String metadataSchema;
+
+    /**
+     * Airflow schedule interval
+     * Examples: "@daily", "@hourly", "0 0 * * *", null (manual trigger only)
+     */
+    private String scheduleInterval;
 }

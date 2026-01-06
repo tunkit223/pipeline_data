@@ -5,12 +5,12 @@ import lombok.Data;
 
 /**
  * Entity: Tiến trình (Process Instance)
- * Schema: UIT_CALC
+ * Note: Schema được set động, không hard-code
  * Table: uce_process
  */
 @Data
 @Entity
-@Table(name = "uce_process", schema = "uit_calc")
+@Table(name = "uce_process")
 public class UceProcess {
 
     @Id

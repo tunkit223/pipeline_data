@@ -48,39 +48,4 @@ public class UceProcessController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * Get Process by code
-     * GET /api/v2/process/{procCode}
-     */
-    @GetMapping("/{procCode}")
-    public ResponseEntity<UceProcess> getProcess(@PathVariable String procCode) {
-        log.info("Getting Process: {}", procCode);
-        UceProcess process = processService.getProcess(procCode);
-        return ResponseEntity.ok(process);
-    }
-
-    /**
-     * Get all Processes by Meta Process
-     * GET /api/v2/process/by-meta/{metaProcCode}
-     */
-    @GetMapping("/by-meta/{metaProcCode}")
-    public ResponseEntity<List<UceProcess>> getProcessesByMetaProc(@PathVariable String metaProcCode) {
-        log.info("Getting Processes for Meta Process: {}", metaProcCode);
-        List<UceProcess> processes = processService.getProcessesByMetaProc(metaProcCode);
-        return ResponseEntity.ok(processes);
-    }
-
-    /**
-     * Update Process status
-     * PUT /api/v2/process/{procCode}/status
-     */
-    @PutMapping("/{procCode}/status")
-    public ResponseEntity<Void> updateProcessStatus(
-            @PathVariable String procCode,
-            @RequestBody Map<String, String> request) {
-        String status = request.get("status");
-        log.info("Updating Process {} status to {}", procCode, status);
-        processService.updateProcessStatus(procCode, status);
-        return ResponseEntity.ok().build();
-    }
 }

@@ -5,12 +5,12 @@ import lombok.Data;
 
 /**
  * Entity: Tác vụ (Task Instance)
- * Schema: UIT_CALC
+ * Note: Schema được set động, không hard-code
  * Table: uce_task
  */
 @Data
 @Entity
-@Table(name = "uce_task", schema = "uit_calc")
+@Table(name = "uce_task")
 public class UceTask {
 
     @Id
@@ -23,6 +23,9 @@ public class UceTask {
 
     @Column(name = "proc_code", nullable = false, length = 250)
     private String procCode;
+
+    @Column(name = "meta_task_code", nullable = false, length = 250)
+    private String metaTaskCode;
 
     @Column(name = "meta_proc_code", nullable = false, length = 250)
     private String metaProcCode;

@@ -5,12 +5,12 @@ import lombok.Data;
 
 /**
  * Entity: Khung tiến trình tính toán
- * Schema: UIT_CALC
+ * Note: Không còn hard-code schema, sẽ được set động
  * Table: uce_meta_process
  */
 @Data
 @Entity
-@Table(name = "uce_meta_process", schema = "uit_calc")
+@Table(name = "uce_meta_process")
 public class UceMetaProcess {
 
     @Id
@@ -34,4 +34,19 @@ public class UceMetaProcess {
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
+
+    /**
+     * Schema chứa metadata của tiến trình này
+     * Ví dụ: "hr_calc", "finance_calc", "test_dynamic_schema"
+     * Each tenant can have their own schema for metadata isolation
+     */
+    @Column(name = "metadata_schema", nullable = false, length = 100)
+    private String metadataSchema;
+
+    /**
+     * Airflow schedule interval for DAG
+     * Examples: "@daily", "@hourly", "0 0 * * *", null (manual trigger only)
+     */
+    @Column(name = "schedule_interval", length = 100)
+    private String scheduleInterval;
 }

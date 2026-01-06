@@ -86,7 +86,12 @@ public class AirflowIntegrationController {
     }
 
     /**
-     * Sync DAG Config based on Process Instance
+     * DEPRECATED - Phase 1 Legacy API
+     * Sync DAG Config (Variable only, uses shared DAG template)
+     * 
+     * ⚠️ This API only syncs Airflow Variable to existing DAG template (e.g., uit_reward_mp_sale.py)
+     * ⚠️ Use POST /api/v2/airflow/sync-process-to-dag for Phase 2 (Dynamic DAG generation)
+     * 
      * POST /api/v2/airflow/sync-dag-config
      * 
      * Request body:
@@ -94,12 +99,16 @@ public class AirflowIntegrationController {
      *   "procCode": "PROC_META_STUDENT_ANALYTICS_20260104_001",
      *   "connectionName": "spring_boot_layer2_api"
      * }
+     * 
+     * @deprecated Use syncProcessToDag() instead for Phase 2 dynamic DAG generation
      */
+    @Deprecated
     @PostMapping("/sync-dag-config")
     public ResponseEntity<Map<String, Object>> syncDagConfig(@RequestBody Map<String, String> request) {
         String procCode = request.get("procCode");
         String connectionName = request.get("connectionName");
 
+        log.warn("⚠️ Using deprecated API /sync-dag-config. Consider migrating to /sync-process-to-dag for Phase 2.");
         log.info("Syncing DAG Config for Process: {}", procCode);
 
         Map<String, Object> result = airflowIntegrationService.syncDagConfigByProcess(procCode, connectionName);
@@ -130,6 +139,47 @@ public class AirflowIntegrationController {
         log.info("Triggering DAG: {}", dagId);
 
         Map<String, Object> result = airflowIntegrationService.triggerDag(connectionName, dagId, conf);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Phase 2: Sync Process to Dynamic DAG
+     * Generate DAG file + Create Airflow Variable for specific Process
+     * POST /api/v2/airflow/sync-process-to-dag
+     * 
+     * Request body:
+     * {
+     *   "procCode": "PROC_STUDENT_ANALYTICS_2026_1_202601",
+     *   "connectionName": "spring_boot_layer2_api",
+     *   "dagDirectory": "e:/nam3/DA1/pipline_data/airflow/dags"
+     * }
+     * 
+     * Response:
+     * {
+     *   "success": true,
+     *   "dagId": "uce_student_analytics_2026_1_202601",
+     *   "dagFilePath": "e:/nam3/DA1/pipline_data/airflow/dags/uce_student_analytics_2026_1_202601.py",
+     *   "variableName": "uce_var_proc_student_analytics_2026_1_202601",
+     *   "procCode": "PROC_STUDENT_ANALYTICS_2026_1_202601",
+     *   "metaProcCode": "STUDENT_ANALYTICS_2026",
+     *   "totalTasks": 4,
+     *   "scheduleInterval": "@daily",
+     *   "airflowUrl": "http://localhost:8080/dags/uce_student_analytics_2026_1_202601"
+     * }
+     */
+    @PostMapping("/sync-process-to-dag")
+    public ResponseEntity<Map<String, Object>> syncProcessToDag(@RequestBody Map<String, String> request) {
+        String procCode = request.get("procCode");
+        String connectionName = request.get("connectionName");
+        String dagDirectory = request.get("dagDirectory");
+
+        if (dagDirectory == null || dagDirectory.isBlank()) {
+            throw new IllegalArgumentException("dagDirectory is required. Please specify Airflow DAGs directory path.");
+        }
+
+        log.info("🚀 Phase 2: Syncing Process {} to Dynamic DAG at {}", procCode, dagDirectory);
+
+        Map<String, Object> result = airflowIntegrationService.syncProcessToDag(procCode, connectionName, dagDirectory);
         return ResponseEntity.ok(result);
     }
 }

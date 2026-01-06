@@ -27,20 +27,6 @@ public class UceExecutionController {
     private final UceExecutionService executionService;
 
     /**
-     * Initialize Process Execution
-     * Được gọi từ Airflow khi DAG bắt đầu
-     * POST /api/v2/execution/init-process
-     */
-    @PostMapping("/init-process")
-    public ResponseEntity<ProcessCreationResult> initProcessExecution(@RequestBody ProcessExecutionRequest request) {
-        log.info("Initializing Process Execution: {}", request.getProcExecCode());
-        log.debug("Request: {}", request);
-
-        ProcessCreationResult result = executionService.initProcessExecution(request);
-        return ResponseEntity.ok(result);
-    }
-
-    /**
      * Execute Task
      * Được gọi từ Airflow cho mỗi task trong DAG
      * POST /api/v2/execution/execute-task
@@ -52,22 +38,6 @@ public class UceExecutionController {
 
         TaskExecutionResult result = executionService.executeTask(request);
         return ResponseEntity.ok(result);
-    }
-
-    /**
-     * Complete Process Execution
-     * Được gọi từ Airflow khi DAG kết thúc
-     * POST /api/v2/execution/complete-process
-     */
-    @PostMapping("/complete-process")
-    public ResponseEntity<Void> completeProcessExecution(@RequestBody Map<String, Object> request) {
-        String procExecCode = (String) request.get("procExecCode");
-        String status = (String) request.get("status");
-        
-        log.info("Completing Process Execution: {} with status: {}", procExecCode, status);
-
-        executionService.completeProcessExecution(procExecCode, status);
-        return ResponseEntity.ok().build();
     }
 
     /**

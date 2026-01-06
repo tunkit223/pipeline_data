@@ -5,7 +5,7 @@ import lombok.Data;
 
 /**
  * Entity: Tiến trình được thực thi
- * Schema: UIT_CALC
+ * Note: Execution logs stored in uit_calc schema (centralized logging)
  * Table: uce_proc_exec
  */
 @Data

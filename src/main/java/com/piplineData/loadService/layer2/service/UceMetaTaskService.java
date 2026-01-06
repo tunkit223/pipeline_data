@@ -1,11 +1,12 @@
 package com.piplineData.loadService.layer2.service;
 
-import com.piplineData.loadService.layer2.dto.UceMetaTaskRequest;
+import com.piplineData.loadService.layer2.dto.MetaTaskRequest;
 import com.piplineData.loadService.layer2.entity.UceMetaTask;
 import com.piplineData.loadService.layer2.repository.UceMetaTaskRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,12 +22,15 @@ public class UceMetaTaskService {
 
     private final UceMetaTaskRepository metaTaskRepository;
     private final ObjectMapper objectMapper;
+    private final JdbcTemplate jdbcTemplate;
 
     /**
-     * Create new Meta Task
+     * Create new Meta Task (DEPRECATED - use createMetaTaskInSchema instead)
+     * @deprecated Use createMetaTaskInSchema() for dynamic schema support
      */
+    @Deprecated
     @Transactional
-    public UceMetaTask createMetaTask(UceMetaTaskRequest request) {
+    public UceMetaTask createMetaTask(MetaTaskRequest request) {
         log.info("Creating Meta Task: {}", request.getMetaTaskCode());
 
         // Check if task code already exists
@@ -40,21 +44,82 @@ public class UceMetaTaskService {
         metaTask.setMetaProcCode(request.getMetaProcCode());
         metaTask.setTaskOrder(request.getTaskOrder());
         metaTask.setMetaTaskType(request.getTaskType());
+        metaTask.setSelector(request.getSqlTemplate());
+        metaTask.setMetaTaskNote(request.getMetaTaskNote());
+        metaTask.setPreMetaTaskCodelist(request.getPreMetaTaskCodelist());
+        metaTask.setPostMetaTaskCodelist(request.getPostMetaTaskCodelist());
         
-        // Convert SQL template and params to JSON string
-        try {
-            if (request.getSqlTemplate() != null) {
-                metaTask.setSelector(request.getSqlTemplate());
-            }
-            if (request.getParamsTemplate() != null) {
-                String paramsJson = objectMapper.writeValueAsString(request.getParamsTemplate());
-                metaTask.setMetaTaskNote(paramsJson);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to convert params to JSON", e);
-        }
+        // Auto-determine is_starting và is_ending
+        metaTask.setIsStarting(request.getPreMetaTaskCodelist() == null || request.getPreMetaTaskCodelist().trim().isEmpty());
+        metaTask.setIsEnding(request.getPostMetaTaskCodelist() == null || request.getPostMetaTaskCodelist().trim().isEmpty());
+        metaTask.setIsActive(true);
 
         return metaTaskRepository.save(metaTask);
+    }
+
+    /**
+     * Create Meta Task in dynamic schema
+     */
+    @Transactional
+    public UceMetaTask createMetaTaskInSchema(MetaTaskRequest request, String schema) {
+        log.info("Creating Meta Task: {} in schema: {}", request.getMetaTaskCode(), schema);
+
+        // Check for duplicate Meta Task Code
+        String checkSQL = String.format(
+            "SELECT COUNT(*) FROM %s.uce_meta_task WHERE meta_task_code = ?", schema);
+        Integer count = jdbcTemplate.queryForObject(checkSQL, Integer.class, request.getMetaTaskCode());
+        if (count != null && count > 0) {
+            throw new RuntimeException(String.format(
+                "Meta Task '%s' already exists in schema '%s'. Cannot create duplicate.",
+                request.getMetaTaskCode(), schema));
+        }
+
+        String insertSQL = String.format("""
+            INSERT INTO %s.uce_meta_task 
+            (meta_task_code, meta_task_name, meta_proc_code, task_order, meta_task_type,
+             pre_meta_task_codelist, post_meta_task_codelist, selector, processor, insertor, 
+             meta_task_note, is_active, is_starting, is_ending)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, schema);
+
+        // Auto-determine is_starting và is_ending
+        boolean isStarting = request.getPreMetaTaskCodelist() == null || request.getPreMetaTaskCodelist().trim().isEmpty();
+        boolean isEnding = request.getPostMetaTaskCodelist() == null || request.getPostMetaTaskCodelist().trim().isEmpty();
+
+        jdbcTemplate.update(insertSQL,
+            request.getMetaTaskCode(),
+            request.getMetaTaskName(),
+            request.getMetaProcCode(),
+            request.getTaskOrder(),
+            request.getTaskType(),
+            request.getPreMetaTaskCodelist(),
+            request.getPostMetaTaskCodelist(),
+            request.getSqlTemplate(),
+            null, // processor
+            null, // insertor
+            request.getMetaTaskNote(),
+            true, // is_active
+            isStarting,
+            isEnding
+        );
+
+        // Return entity
+        UceMetaTask metaTask = new UceMetaTask();
+        metaTask.setMetaTaskCode(request.getMetaTaskCode());
+        metaTask.setMetaTaskName(request.getMetaTaskName());
+        metaTask.setMetaProcCode(request.getMetaProcCode());
+        metaTask.setTaskOrder(request.getTaskOrder());
+        metaTask.setMetaTaskType(request.getTaskType());
+        metaTask.setPreMetaTaskCodelist(request.getPreMetaTaskCodelist());
+        metaTask.setPostMetaTaskCodelist(request.getPostMetaTaskCodelist());
+        metaTask.setSelector(request.getSqlTemplate());
+        metaTask.setMetaTaskNote(request.getMetaTaskNote());
+        metaTask.setIsActive(true);
+        metaTask.setIsStarting(isStarting);
+        metaTask.setIsEnding(isEnding);
+
+        log.info("Created Meta Task {} in schema {}", metaTask.getMetaTaskCode(), schema);
+        return metaTask;
     }
 
     /**
@@ -76,7 +141,7 @@ public class UceMetaTaskService {
      * Update Meta Task
      */
     @Transactional
-    public UceMetaTask updateMetaTask(String metaTaskCode, UceMetaTaskRequest request) {
+    public UceMetaTask updateMetaTask(String metaTaskCode, MetaTaskRequest request) {
         log.info("Updating Meta Task: {}", metaTaskCode);
 
         UceMetaTask existing = getByCode(metaTaskCode);
@@ -84,18 +149,14 @@ public class UceMetaTaskService {
         existing.setMetaTaskName(request.getMetaTaskName());
         existing.setTaskOrder(request.getTaskOrder());
         existing.setMetaTaskType(request.getTaskType());
-
-        try {
-            if (request.getSqlTemplate() != null) {
-                existing.setSelector(request.getSqlTemplate());
-            }
-            if (request.getParamsTemplate() != null) {
-                String paramsJson = objectMapper.writeValueAsString(request.getParamsTemplate());
-                existing.setMetaTaskNote(paramsJson);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to convert params to JSON", e);
-        }
+        existing.setSelector(request.getSqlTemplate());
+        existing.setMetaTaskNote(request.getMetaTaskNote());
+        existing.setPreMetaTaskCodelist(request.getPreMetaTaskCodelist());
+        existing.setPostMetaTaskCodelist(request.getPostMetaTaskCodelist());
+        
+        // Auto-determine is_starting và is_ending
+        existing.setIsStarting(request.getPreMetaTaskCodelist() == null || request.getPreMetaTaskCodelist().trim().isEmpty());
+        existing.setIsEnding(request.getPostMetaTaskCodelist() == null || request.getPostMetaTaskCodelist().trim().isEmpty());
 
         return metaTaskRepository.save(existing);
     }

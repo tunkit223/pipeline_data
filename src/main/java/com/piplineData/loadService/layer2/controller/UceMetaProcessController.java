@@ -8,6 +8,7 @@ import com.piplineData.loadService.layer2.entity.UceMetaProcess;
 import com.piplineData.loadService.layer2.entity.UceMetaTask;
 import com.piplineData.loadService.layer2.service.UceMetaProcessService;
 import com.piplineData.loadService.layer2.service.UceProcessService;
+import com.piplineData.loadService.layer2.service.TemplateRenderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +20,7 @@ import java.util.Map;
 
 /**
  * Controller để quản lý Meta Process và Meta Task
+ * Hỗ trợ dynamic schema - user chọn schema khi tạo Meta Process
  */
 @Slf4j
 @RestController
@@ -28,6 +30,7 @@ public class UceMetaProcessController {
 
     private final UceMetaProcessService metaProcessService;
     private final UceProcessService processService;
+    private final TemplateRenderService templateRenderService;
 
     /**
      * Create Meta Process
@@ -35,7 +38,7 @@ public class UceMetaProcessController {
      */
     @PostMapping
     public ResponseEntity<UceMetaProcess> createMetaProcess(@RequestBody MetaProcessRequest request) {
-        log.info("Creating Meta Process: {}", request.getMetaProcCode());
+        log.info("Creating Meta Process: {} in schema: {}", request.getMetaProcCode(), request.getMetadataSchema());
         UceMetaProcess metaProcess = metaProcessService.createMetaProcess(request);
         return ResponseEntity.ok(metaProcess);
     }
@@ -119,8 +122,21 @@ public class UceMetaProcessController {
     public ResponseEntity<Boolean> validateMetaProcess(@PathVariable String code) {
         log.info("Validating Meta Process: {}", code);
         boolean isValid = metaProcessService.validateNoCycle(code);
-        return ResponseEntity.ok(isValid);}
+        return ResponseEntity.ok(isValid);
+    }
 
+    /**
+     * Create Process Instance from Meta Process
+     * POST /api/v2/meta-process/{code}/create-process
+     * 
+     * NEW: Support dynamic schema via domainCode parameter
+     * Body: {
+     *   "domainCode": "student_analytics",  // Optional, default "uit_default" 
+     *   "calcProgId": 1,
+     *   "calcPeriodId": 1,
+     *   "procParams": {
+     *     "prog_spec": "2023-2024",
+     *     "semester": "HK2",
     /**
      * Create Process Instance from Meta Process
      * POST /api/v2/meta-process/{code}/create-process

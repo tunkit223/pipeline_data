@@ -1,13 +1,12 @@
 package com.piplineData.loadService.layer2.service;
 
-import com.piplineData.loadService.layer2.dto.ProcessCreationResult;
-import com.piplineData.loadService.layer2.dto.ProcessExecutionRequest;
 import com.piplineData.loadService.layer2.dto.TaskExecutionRequest;
 import com.piplineData.loadService.layer2.dto.TaskExecutionResult;
 import com.piplineData.loadService.layer2.entity.*;
 import com.piplineData.loadService.layer2.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,72 +24,11 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class UceExecutionService {
 
-    private final UceProcessRepository processRepository;
-    private final UceTaskRepository taskRepository;
     private final UceProcExecRepository procExecRepository;
     private final UceTaskExecRepository taskExecRepository;
-    private final UceProcessService processService;
     private final TemplateRenderService templateRenderService;
     private final SqlExecutorService sqlExecutorService;
-
-    /**
-     * Khởi tạo Process Execution
-     * Gọi từ Airflow khi DAG bắt đầu
-     */
-    @Transactional
-    public ProcessCreationResult initProcessExecution(ProcessExecutionRequest request) {
-        log.info("Initializing Process Execution: {}", request.getProcExecCode());
-
-        // 1. Tạo hoặc lấy Process
-        UceProcess process;
-        if (request.getProcessCode() != null) {
-            process = processRepository.findByProcCode(request.getProcessCode())
-                .orElseThrow(() -> new RuntimeException("Process not found: " + request.getProcessCode()));
-        } else {
-            // Tạo mới Process từ Meta Process
-            Map<String, Object> businessParams = request.getRuntimeParams() != null 
-                ? request.getRuntimeParams() 
-                : new HashMap<>();
-            
-            ProcessCreationResult result = processService.createProcessFromMeta(
-                request.getMetaProcCode(),
-                request.getCalcProgId(),
-                request.getCalcPeriodId(),
-                businessParams
-            );
-            
-            process = processService.getProcess(result.getProcCode());
-        }
-
-        // 2. Create Process Execution log
-        UceProcExec procExec = new UceProcExec();
-        procExec.setProcExecCode(request.getProcExecCode());
-        procExec.setProcCode(process.getProcCode());
-        procExec.setMetaProcCode(process.getMetaProcCode());
-        procExec.setCalcProgId(process.getCalcProgId());
-        procExec.setCalcPeriodId(process.getCalcPeriodId());
-        procExec.setStatus("RUNNING");
-
-        procExecRepository.save(procExec);
-        log.info("Created Process Execution: {}", request.getProcExecCode());
-
-        // 3. Update Process status
-        processService.updateProcessStatus(process.getProcCode(), "RUNNING");
-
-        // 4. Get all tasks
-        List<UceTask> tasks = taskRepository.findByProcCode(process.getProcCode());
-        List<String> taskCodes = tasks.stream().map(UceTask::getTaskCode).toList();
-
-        return ProcessCreationResult.builder()
-            .procCode(process.getProcCode())
-            .metaProcCode(process.getMetaProcCode())
-            .procId(process.getProcId())
-            .status("RUNNING")
-            .taskCodes(taskCodes)
-            .totalTasks(taskCodes.size())
-            .message("Process execution initialized successfully")
-            .build();
-    }
+    private final JdbcTemplate jdbcTemplate;
 
     /**
      * Execute một Task
@@ -104,9 +42,18 @@ public class UceExecutionService {
         String taskExecCode = generateTaskExecCode(request.getTaskCode(), request.getProcExecCode());
 
         try {
-            // 1. Get Task
-            UceTask task = taskRepository.findByTaskCode(request.getTaskCode())
-                .orElseThrow(() -> new RuntimeException("Task not found: " + request.getTaskCode()));
+            // 1. Extract meta process code and find schema
+            String metaProcCode = request.getMetaProcCode();
+            if (metaProcCode == null || metaProcCode.isEmpty()) {
+                // Try to extract from task code or process code
+                throw new RuntimeException("metaProcCode is required in request");
+            }
+            
+            String schema = findMetaProcessSchema(metaProcCode);
+            log.info("Found schema for execution: {}", schema);
+            
+            // 2. Get Task from dynamic schema
+            UceTask task = queryTaskFromSchema(schema, request.getTaskCode());
 
             // 2. Create Task Execution log
             UceTaskExec taskExec = new UceTaskExec();
@@ -195,9 +142,12 @@ public class UceExecutionService {
             taskExec.setFinishedAt(finishTime);
             taskExecRepository.save(taskExec);
 
-            // 6. Update Task status
-            task.setStatus("SUCCESS");
-            taskRepository.save(task);
+            // 6. Update Task status in dynamic schema using JdbcTemplate
+            String updateTaskSQL = String.format(
+                "UPDATE %s.uce_task SET status = ? WHERE task_code = ?",
+                schema
+            );
+            jdbcTemplate.update(updateTaskSQL, "SUCCESS", request.getTaskCode());
 
             long executionTimeMs = java.time.Duration.between(startTime, finishTime).toMillis();
 
@@ -263,20 +213,67 @@ public class UceExecutionService {
         return taskExecRepository.findByTaskExecCode(taskExecCode)
             .orElseThrow(() -> new RuntimeException("Task Execution not found: " + taskExecCode));
     }
-
+    
     /**
-     * Complete Process Execution
-     * Gọi khi DAG kết thúc
+     * Helper: Find schema containing Meta Process
      */
-    @Transactional
-    public void completeProcessExecution(String procExecCode, String status) {
-        UceProcExec procExec = getProcessExecution(procExecCode);
-        procExec.setStatus(status);
-        procExecRepository.save(procExec);
-
-        // Update Process status
-        processService.updateProcessStatus(procExec.getProcCode(), status);
+    private String findMetaProcessSchema(String metaProcCode) {
+        String findSchemasSQL = """
+            SELECT table_schema 
+            FROM information_schema.tables 
+            WHERE table_name = 'uce_meta_process'
+            """;
         
-        log.info("Process Execution {} completed with status: {}", procExecCode, status);
+        List<String> schemas = jdbcTemplate.queryForList(findSchemasSQL, String.class);
+        
+        for (String schema : schemas) {
+            String checkSQL = String.format(
+                "SELECT metadata_schema FROM %s.uce_meta_process WHERE meta_proc_code = ?", 
+                schema
+            );
+            try {
+                return jdbcTemplate.queryForObject(checkSQL, String.class, metaProcCode);
+            } catch (Exception e) {
+                continue;
+            }
+        }
+        
+        throw new RuntimeException("Meta Process not found: " + metaProcCode);
+    }
+    
+    /**
+     * Query single Task from dynamic schema
+     */
+    private UceTask queryTaskFromSchema(String schema, String taskCode) {
+        String sql = String.format("""
+            SELECT task_id, task_code, proc_code, meta_task_code, meta_proc_code,
+                   calc_prog_id, calc_period_id, selector_biz, processor_biz, 
+                   insertor_biz, status, task_note
+            FROM %s.uce_task
+            WHERE task_code = ?
+            """, schema);
+        
+        List<UceTask> results = jdbcTemplate.query(sql, (rs, rowNum) -> {
+            UceTask task = new UceTask();
+            task.setTaskId(rs.getLong("task_id"));
+            task.setTaskCode(rs.getString("task_code"));
+            task.setProcCode(rs.getString("proc_code"));
+            task.setMetaTaskCode(rs.getString("meta_task_code"));
+            task.setMetaProcCode(rs.getString("meta_proc_code"));
+            task.setCalcProgId(rs.getLong("calc_prog_id"));
+            task.setCalcPeriodId(rs.getLong("calc_period_id"));
+            task.setSelectorBiz(rs.getString("selector_biz"));
+            task.setProcessorBiz(rs.getString("processor_biz"));
+            task.setInsertorBiz(rs.getString("insertor_biz"));
+            task.setStatus(rs.getString("status"));
+            task.setTaskNote(rs.getString("task_note"));
+            return task;
+        }, taskCode);
+        
+        if (results.isEmpty()) {
+            throw new RuntimeException("Task not found: " + taskCode);
+        }
+        
+        return results.get(0);
     }
 }

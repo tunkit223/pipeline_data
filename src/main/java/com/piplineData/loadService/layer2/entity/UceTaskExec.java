@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 
 /**
  * Entity: Tác vụ được thực thi
- * Schema: UIT_CALC
+ * Note: Execution logs stored in uit_calc schema (centralized logging)
  * Table: uce_task_exec
  */
 @Data
