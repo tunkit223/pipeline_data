@@ -3,7 +3,7 @@ server:
 
 spring:
   application:
-    name: pipeline-data-layer1
+    name: pipeline-data-platform
 
   datasource:
     url: jdbc:postgresql://localhost:5432/pipeline_data
@@ -12,8 +12,8 @@ spring:
     driver-class-name: org.postgresql.Driver
     hikari:
       connection-init-sql: SET TIME ZONE 'UTC'
-      maximum-pool-size: 10
-      minimum-idle: 5
+      maximum-pool-size: 20
+      minimum-idle: 10
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
@@ -27,14 +27,17 @@ spring:
         jdbc:
           time_zone: UTC
         format_sql: true
+        default_schema: public
     show-sql: false
 
 # Logging configuration
 logging:
   level:
     com.piplineData.loadService: INFO
+    com.piplineData.loadService.layer2: DEBUG
     org.springframework.jdbc: DEBUG
     org.hibernate.SQL: DEBUG
+    org.springframework.web.client: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
@@ -46,6 +49,7 @@ retry:
 
 # Custom configuration
 pipeline:
+  # Layer 1: Data Collection
   # Destination database (chính là database hiện tại)
   destination:
     schema: pipeline_data
@@ -54,3 +58,30 @@ pipeline:
   batch:
     chunkSize: 1000
     fetchSize: 500
+  
+  # Layer 2: Calculation Engine & Airflow Integration
+  layer2:
+    # Database schemas for Layer 2
+    schemas:
+      uit_calc: uit_calc
+      uce_program: uce_program
+      pipeline_config: pipeline_config
+    
+    # Default Airflow connection
+    airflow:
+      default_connection: default_airflow
+      base_url: http://localhost:8081
+      username: admin
+      password: admin
+      api:
+        variables: /api/v1/variables
+        dag_runs: /api/v1/dags/{dag_id}/dagRuns
+      
+    # Execution settings
+    execution:
+      timeout_seconds: 3600
+      max_retries: 3
+      
+    # SQL Template settings
+    template:
+      param_pattern: "\\{\\{\\s*(\\w+)\\s*\\}\\}"
