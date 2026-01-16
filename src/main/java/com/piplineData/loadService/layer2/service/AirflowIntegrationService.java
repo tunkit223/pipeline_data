@@ -291,7 +291,9 @@ public class AirflowIntegrationService {
             // 5. Build Airflow Variable DTO
             AirflowVariableDto variableDto = AirflowVariableDto.builder()
                 .tasks(taskDefs)
-                .httpConnId(progUseMetaProcess.getConnectionId())
+                .httpConnId(progUseMetaProcess.getConnectionId() != null 
+                    ? progUseMetaProcess.getConnectionId().toString() 
+                    : null)
                 .processCode("PROC_" + metaProcCode)
                 .companyId(0L) // Will be provided at runtime
                 .brandId(0L)
@@ -301,7 +303,9 @@ public class AirflowIntegrationService {
                 .build();
 
             // 6. Call Airflow API to create/update Variable
-            String variableName = progUseMetaProcess.getUseVar();
+            String variableName = progUseMetaProcess.getUseVar() != null 
+                ? progUseMetaProcess.getUseVar().toString() 
+                : "default_var";
             String variableJson = objectMapper.writeValueAsString(variableDto);
 
             boolean success = createOrUpdateAirflowVariable(connection, variableName, variableJson);

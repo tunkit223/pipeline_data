@@ -1,8 +1,12 @@
 package com.piplineData.loadService.layer2.entity;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import io.hypersistence.utils.hibernate.type.json.JsonBinaryType;
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Type;
 
 /**
@@ -11,6 +15,9 @@ import org.hibernate.annotations.Type;
  * Table: uce_prog
  */
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @Entity
 @Table(name = "uce_prog", schema = "uce_program")
 public class UceProg {
@@ -42,6 +49,6 @@ public class UceProg {
     private String progType = "NOTARGET"; // TARGET / NOTARGET
 
     @Type(JsonBinaryType.class)
-    @Column(name = "prog_spec", nullable = false, columnDefinition = "jsonb")
-    private String progSpec;
+    @Column(name = "prog_spec", columnDefinition = "jsonb")
+    private JsonNode progSpec;
 }

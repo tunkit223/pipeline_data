@@ -3,14 +3,17 @@ package com.piplineData.loadService.layer2.entity;
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.time.LocalDateTime;
+
 /**
  * Entity: Tiến trình được thực thi
- * Note: Execution logs stored in uit_calc schema (centralized logging)
+ * Note: Execution logs stored in dynamic schema (customer-specific)
  * Table: uce_proc_exec
+ * Schema: Determined by meta_proc_code's metadata_schema
  */
 @Data
 @Entity
-@Table(name = "uce_proc_exec", schema = "uit_calc")
+@Table(name = "uce_proc_exec")
 public class UceProcExec {
 
     @Id
@@ -38,4 +41,17 @@ public class UceProcExec {
 
     @Column(name = "status", length = 100)
     private String status = "RUNNING"; // RUNNING / SUCCESS / FAILED
+
+    @Column(name = "started_at")
+    private LocalDateTime startedAt;
+
+    @Column(name = "finished_at")
+    private LocalDateTime finishedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        if (startedAt == null) {
+            startedAt = LocalDateTime.now();
+        }
+    }
 }

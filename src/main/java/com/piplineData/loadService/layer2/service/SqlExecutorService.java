@@ -184,6 +184,18 @@ public class SqlExecutorService {
     private void createTableIfNotExists(String tableName, Map<String, Object> sampleRow) {
         log.info("Creating table if not exists: {}", tableName);
         
+        // Extract schema name if exists (format: schema.table)
+        String schemaName = null;
+        String pureTableName = tableName;
+        if (tableName.contains(".")) {
+            String[] parts = tableName.split("\\.");
+            schemaName = parts[0];
+            pureTableName = parts[1];
+            
+            // Create schema if not exists
+            ensureSchemaExists(schemaName);
+        }
+        
         StringBuilder createTableSql = new StringBuilder();
         createTableSql.append("CREATE TABLE IF NOT EXISTS ").append(tableName).append(" (");
         
@@ -202,6 +214,27 @@ public class SqlExecutorService {
         log.debug("CREATE TABLE SQL: {}", createTableSql);
         jdbcTemplate.execute(createTableSql.toString());
         log.info("Table {} created or already exists", tableName);
+    }
+
+    /**
+     * Ensure schema exists, create if not
+     */
+    private void ensureSchemaExists(String schemaName) {
+        try {
+            String checkSchemaSql = "SELECT schema_name FROM information_schema.schemata WHERE schema_name = ?";
+            List<String> schemas = jdbcTemplate.queryForList(checkSchemaSql, String.class, schemaName);
+            
+            if (schemas.isEmpty()) {
+                log.info("Schema {} does not exist, creating...", schemaName);
+                String createSchemaSql = "CREATE SCHEMA IF NOT EXISTS " + schemaName;
+                jdbcTemplate.execute(createSchemaSql);
+                log.info("✅ Schema {} created successfully", schemaName);
+            } else {
+                log.debug("Schema {} already exists", schemaName);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to check/create schema {}: {}", schemaName, e.getMessage());
+        }
     }
 
     /**

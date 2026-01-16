@@ -7,12 +7,13 @@ import java.time.LocalDateTime;
 
 /**
  * Entity: Tác vụ được thực thi
- * Note: Execution logs stored in uit_calc schema (centralized logging)
+ * Note: Execution logs stored in dynamic schema (customer-specific)
  * Table: uce_task_exec
+ * Schema: Determined by meta_proc_code's metadata_schema
  */
 @Data
 @Entity
-@Table(name = "uce_task_exec", schema = "uit_calc")
+@Table(name = "uce_task_exec")
 public class UceTaskExec {
 
     @Id

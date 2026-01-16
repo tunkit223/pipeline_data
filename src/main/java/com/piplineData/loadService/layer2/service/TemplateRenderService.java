@@ -37,6 +37,9 @@ public class TemplateRenderService {
             params = new HashMap<>();
         }
 
+        // Flatten nested useVar object to root level
+        params = flattenParams(params);
+
         log.debug("Rendering template with {} parameters", params.size());
         
         StringBuffer result = new StringBuffer();
@@ -73,6 +76,26 @@ public class TemplateRenderService {
         // Don't auto-add quotes - let template handle SQL syntax
         // This allows templates to use '${param}' or ${param} as needed
         return value.toString();
+    }
+
+    /**
+     * Flatten nested parameters (e.g., useVar object) to root level
+     * Example: {useVar: {p_nam: 2026}} -> {p_nam: 2026}
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> flattenParams(Map<String, Object> params) {
+        Map<String, Object> flattened = new HashMap<>(params);
+        
+        // If useVar exists and is a Map, merge it into root level
+        Object useVar = params.get("useVar");
+        if (useVar instanceof Map) {
+            Map<String, Object> useVarMap = (Map<String, Object>) useVar;
+            // Add all useVar entries to root level (they will override if duplicate)
+            flattened.putAll(useVarMap);
+            log.debug("Flattened {} parameters from useVar", useVarMap.size());
+        }
+        
+        return flattened;
     }
 
     /**

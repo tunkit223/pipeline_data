@@ -1,8 +1,12 @@
 package com.piplineData.loadService.layer2.entity;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import io.hypersistence.utils.hibernate.type.json.JsonBinaryType;
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Type;
 
 import java.time.LocalDateTime;
@@ -13,6 +17,9 @@ import java.time.LocalDateTime;
  * Table: uce_prog_period
  */
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @Entity
 @Table(name = "uce_prog_period", schema = "uce_program")
 public class UceProgPeriod {
@@ -35,16 +42,16 @@ public class UceProgPeriod {
     private String status = "DECLARED"; // DECLARED / APPROVED / RUNNING / FINISHED / PENDING / TERMINATED
 
     @Type(JsonBinaryType.class)
-    @Column(name = "period_spec", nullable = false, columnDefinition = "jsonb")
-    private String periodSpec;
+    @Column(name = "period_spec", columnDefinition = "jsonb")
+    private JsonNode periodSpec;
+
+    @Type(JsonBinaryType.class)
+    @Column(name = "exec_mode", columnDefinition = "jsonb")
+    private JsonNode execMode;
 
     @Column(name = "start_date", nullable = false)
     private LocalDateTime startDate;
 
     @Column(name = "end_date", nullable = false)
     private LocalDateTime endDate;
-
-    @Type(JsonBinaryType.class)
-    @Column(name = "exec_mode", nullable = false, columnDefinition = "jsonb")
-    private String execMode;
 }

@@ -138,9 +138,10 @@ public class UceProcessService {
             INSERT INTO %s.uce_process 
             (proc_code, process_instance_code, meta_proc_code, calc_prog_id, calc_period_id, runtime_params, status, is_lasted)
             VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?)
+            RETURNING proc_id
             """, schema);
         
-        jdbcTemplate.update(insertProcessSQL,
+        Long procId = jdbcTemplate.queryForObject(insertProcessSQL, Long.class,
             procCode,
             procCode,  // Use proc_code as process_instance_code
             metaProcCode,
@@ -150,13 +151,6 @@ public class UceProcessService {
             "READY",
             true
         );
-        
-        // 5. Get proc_id
-        String getProcIdSQL = String.format(
-            "SELECT proc_id FROM %s.uce_process WHERE proc_code = ?",
-            schema
-        );
-        Long procId = jdbcTemplate.queryForObject(getProcIdSQL, Long.class, procCode);
         
         log.info("Created Process: {} with ID {} in schema {}", procCode, procId, schema);
 

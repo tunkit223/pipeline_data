@@ -18,14 +18,13 @@ import java.util.Map;
 /**
  * Service để thực thi Process và Task
  * Được gọi từ Airflow
+Vả * Note: Sử dụng JdbcTemplate để lưu execution logs vào schema động
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class UceExecutionService {
 
-    private final UceProcExecRepository procExecRepository;
-    private final UceTaskExecRepository taskExecRepository;
     private final TemplateRenderService templateRenderService;
     private final SqlExecutorService sqlExecutorService;
     private final JdbcTemplate jdbcTemplate;
@@ -40,6 +39,7 @@ public class UceExecutionService {
         
         LocalDateTime startTime = LocalDateTime.now();
         String taskExecCode = generateTaskExecCode(request.getTaskCode(), request.getProcExecCode());
+        Long taskExecId = null; // For tracking in catch block
 
         try {
             // 1. Extract meta process code and find schema
@@ -52,51 +52,87 @@ public class UceExecutionService {
             String schema = findMetaProcessSchema(metaProcCode);
             log.info("Found schema for execution: {}", schema);
             
+            // 1.5. Ensure Process Execution exists (lazy create)
+            ensureProcessExecutionExists(request, schema);
+            
             // 2. Get Task from dynamic schema
             UceTask task = queryTaskFromSchema(schema, request.getTaskCode());
 
-            // 2. Create Task Execution log
-            UceTaskExec taskExec = new UceTaskExec();
-            taskExec.setTaskExecCode(taskExecCode);
-            taskExec.setProcExecCode(request.getProcExecCode());
-            taskExec.setTaskCode(request.getTaskCode());
-            taskExec.setProcCode(task.getProcCode());
-            taskExec.setMetaProcCode(task.getMetaProcCode());
-            taskExec.setCalcProgId(task.getCalcProgId());
-            taskExec.setCalcPeriodId(task.getCalcPeriodId());
-            taskExec.setStatus("RUNNING");
-            taskExec.setStartedAt(startTime);
+            // 2. Get process_id and proc_exec_id
+            Long processId = jdbcTemplate.queryForObject(
+                String.format("SELECT id FROM %s.uce_process WHERE proc_code = ?", schema),
+                Long.class,
+                task.getProcCode()
+            );
+            
+            Long procExecId = jdbcTemplate.queryForObject(
+                String.format("SELECT id FROM %s.uce_proc_exec WHERE process_id = ? ORDER BY started_at DESC LIMIT 1", schema),
+                Long.class,
+                processId
+            );
+            
+            // 3. Create Task Execution log in dynamic schema
+            String insertTaskExecSQL = String.format(
+                "INSERT INTO %s.uce_task_exec (proc_exec_id, task_id, status, started_at) VALUES (?, ?, ?, ?)",
+                schema
+            );
+            
+            jdbcTemplate.update(insertTaskExecSQL, procExecId, task.getTaskId(), "RUNNING", startTime);
+            
+            // Get the inserted task_exec_id for later updates
+            taskExecId = jdbcTemplate.queryForObject(
+                String.format("SELECT id FROM %s.uce_task_exec WHERE proc_exec_id = ? AND task_id = ? ORDER BY started_at DESC LIMIT 1", schema),
+                Long.class,
+                procExecId,
+                task.getTaskId()
+            );
+            
+            log.info("✅ Logged Task Execution id: {} in schema: {}", taskExecId, schema);
 
-            taskExecRepository.save(taskExec);
-
-            // 3. Render SQL với runtime params (rule điều khiển)
+            // 3. Get runtime_params from uce_process (contains useVar with calc_schema)
+            String getRuntimeParamsSQL = String.format(
+                "SELECT runtime_params FROM %s.uce_process WHERE proc_code = ?",
+                schema
+            );
+            String runtimeParamsJson = jdbcTemplate.queryForObject(getRuntimeParamsSQL, String.class, task.getProcCode());
+            
+            // 3.1 Parse runtime_params JSON and merge with request params
             Map<String, Object> runtimeParams = request.getRuntimeParams() != null 
                 ? request.getRuntimeParams() 
                 : new HashMap<>();
+
+            // Parse and flatten runtime_params from database
+            if (runtimeParamsJson != null && !runtimeParamsJson.isEmpty()) {
+                Map<String, Object> dbParams = templateRenderService.flattenParams(
+                    new com.fasterxml.jackson.databind.ObjectMapper().readValue(runtimeParamsJson, Map.class)
+                );
+                // Merge db params (higher priority for calc_schema, source_schema, etc.)
+                dbParams.forEach(runtimeParams::putIfAbsent);
+            }
 
             // Add request data to params
             runtimeParams.putIfAbsent("company_id", request.getCompanyId());
             runtimeParams.putIfAbsent("brand_id", request.getBrandId());
             runtimeParams.putIfAbsent("calc_prog_id", request.getCalcProgId());
             runtimeParams.putIfAbsent("calc_period_id", request.getCalcPeriodId());
+            
+            log.info("Runtime params for template rendering: {}", runtimeParams);
 
+            // 4. Render SQL với runtime params
             String selectorFinal = null;
             String processorFinal = null;
             String insertorFinal = null;
 
             if (task.getSelectorBiz() != null) {
                 selectorFinal = templateRenderService.render(task.getSelectorBiz(), runtimeParams);
-                taskExec.setSelectorBizCtrl(selectorFinal);
             }
 
             if (task.getProcessorBiz() != null) {
                 processorFinal = templateRenderService.render(task.getProcessorBiz(), runtimeParams);
-                taskExec.setProcessorBizCtrl(processorFinal);
             }
 
             if (task.getInsertorBiz() != null) {
                 insertorFinal = templateRenderService.render(task.getInsertorBiz(), runtimeParams);
-                taskExec.setInsertorBizCtrl(insertorFinal);
             }
 
             // 4. Execute SQL
@@ -146,11 +182,13 @@ public class UceExecutionService {
                 }
             }
 
-            // 5. Update Task Execution status
+            // 5. Update Task Execution status to SUCCESS in dynamic schema
             LocalDateTime finishTime = LocalDateTime.now();
-            taskExec.setStatus("SUCCESS");
-            taskExec.setFinishedAt(finishTime);
-            taskExecRepository.save(taskExec);
+            String updateTaskExecSQL = String.format(
+                "UPDATE %s.uce_task_exec SET status = ?, completed_at = ?, rows_affected = ? WHERE id = ?",
+                schema
+            );
+            jdbcTemplate.update(updateTaskExecSQL, "SUCCESS", finishTime, rowsAffected, taskExecId);
 
             // 6. Update Task status in dynamic schema using JdbcTemplate
             String updateTaskSQL = String.format(
@@ -176,13 +214,31 @@ public class UceExecutionService {
         } catch (Exception e) {
             log.error("Task execution failed: {}", e.getMessage(), e);
 
-            // Update Task Execution status to FAILED
-            UceTaskExec taskExec = taskExecRepository.findByTaskExecCode(taskExecCode).orElse(null);
-            if (taskExec != null) {
-                taskExec.setStatus("FAILED");
-                taskExec.setFinishedAt(LocalDateTime.now());
-                taskExec.setTaskExecNote("Error: " + e.getMessage());
-                taskExecRepository.save(taskExec);
+            // Extract schema again để update FAILED status
+            try {
+                String metaProcCode = request.getMetaProcCode();
+                String schemaForUpdate = findMetaProcessSchema(metaProcCode);
+                
+                // Find task_exec_id by task_code and proc_exec
+                Long taskId = jdbcTemplate.queryForObject(
+                    String.format("SELECT task_id FROM %s.uce_task WHERE task_code = ?", schemaForUpdate),
+                    Long.class,
+                    request.getTaskCode()
+                );
+                
+                // Update Task Execution status to FAILED
+                String updateTaskExecSQL = String.format(
+                    "UPDATE %s.uce_task_exec SET status = ?, completed_at = ?, error_message = ? WHERE task_id = ? AND status = 'RUNNING'",
+                    schemaForUpdate
+                );
+                jdbcTemplate.update(updateTaskExecSQL, 
+                    "FAILED", 
+                    LocalDateTime.now(), 
+                    "Error: " + e.getMessage(),
+                    taskId
+                );
+            } catch (Exception updateEx) {
+                log.error("Failed to update task execution status: {}", updateEx.getMessage());
             }
 
             return TaskExecutionResult.builder()
@@ -209,19 +265,154 @@ public class UceExecutionService {
     }
 
     /**
-     * Get Process Execution status
+     * Get Process Execution status (scan tất cả schema động)
      */
     public UceProcExec getProcessExecution(String procExecCode) {
-        return procExecRepository.findByProcExecCode(procExecCode)
-            .orElseThrow(() -> new RuntimeException("Process Execution not found: " + procExecCode));
+        // Find all schemas có bảng uce_proc_exec
+        String findSchemasSQL = """
+            SELECT table_schema 
+            FROM information_schema.tables 
+            WHERE table_name = 'uce_proc_exec'
+            """;
+        
+        List<String> schemas = jdbcTemplate.queryForList(findSchemasSQL, String.class);
+        
+        for (String schema : schemas) {
+            String querySQL = String.format("""
+                SELECT proc_exec_id, proc_exec_code, proc_code, meta_proc_code, 
+                       calc_prog_id, calc_period_id, proc_exec_note, status, 
+                       started_at, finished_at
+                FROM %s.uce_proc_exec
+                WHERE proc_exec_code = ?
+                """, schema);
+            
+            try {
+                return jdbcTemplate.queryForObject(querySQL, (rs, rowNum) -> {
+                    UceProcExec procExec = new UceProcExec();
+                    procExec.setProcExecId(rs.getLong("proc_exec_id"));
+                    procExec.setProcExecCode(rs.getString("proc_exec_code"));
+                    procExec.setProcCode(rs.getString("proc_code"));
+                    procExec.setMetaProcCode(rs.getString("meta_proc_code"));
+                    procExec.setCalcProgId(rs.getLong("calc_prog_id"));
+                    procExec.setCalcPeriodId(rs.getLong("calc_period_id"));
+                    procExec.setProcExecNote(rs.getString("proc_exec_note"));
+                    procExec.setStatus(rs.getString("status"));
+                    procExec.setStartedAt(rs.getTimestamp("started_at") != null ? 
+                        rs.getTimestamp("started_at").toLocalDateTime() : null);
+                    procExec.setFinishedAt(rs.getTimestamp("finished_at") != null ? 
+                        rs.getTimestamp("finished_at").toLocalDateTime() : null);
+                    return procExec;
+                }, procExecCode);
+            } catch (Exception e) {
+                continue;
+            }
+        }
+        
+        throw new RuntimeException("Process Execution not found: " + procExecCode);
     }
 
     /**
-     * Get Task Execution status
+     * Get Task Execution status (scan tất cả schema động)
      */
     public UceTaskExec getTaskExecution(String taskExecCode) {
-        return taskExecRepository.findByTaskExecCode(taskExecCode)
-            .orElseThrow(() -> new RuntimeException("Task Execution not found: " + taskExecCode));
+        // Find all schemas có bảng uce_task_exec
+        String findSchemasSQL = """
+            SELECT table_schema 
+            FROM information_schema.tables 
+            WHERE table_name = 'uce_task_exec'
+            """;
+        
+        List<String> schemas = jdbcTemplate.queryForList(findSchemasSQL, String.class);
+        
+        for (String schema : schemas) {
+            String querySQL = String.format("""
+                SELECT task_exec_id, task_exec_code, proc_exec_code, task_code, 
+                       proc_code, meta_proc_code, calc_prog_id, calc_period_id,
+                       selector_biz_ctrl, processor_biz_ctrl, insertor_biz_ctrl,
+                       status, started_at, finished_at, task_exec_note
+                FROM %s.uce_task_exec
+                WHERE task_exec_code = ?
+                """, schema);
+            
+            try {
+                return jdbcTemplate.queryForObject(querySQL, (rs, rowNum) -> {
+                    UceTaskExec taskExec = new UceTaskExec();
+                    taskExec.setTaskExecId(rs.getLong("task_exec_id"));
+                    taskExec.setTaskExecCode(rs.getString("task_exec_code"));
+                    taskExec.setProcExecCode(rs.getString("proc_exec_code"));
+                    taskExec.setTaskCode(rs.getString("task_code"));
+                    taskExec.setProcCode(rs.getString("proc_code"));
+                    taskExec.setMetaProcCode(rs.getString("meta_proc_code"));
+                    taskExec.setCalcProgId(rs.getLong("calc_prog_id"));
+                    taskExec.setCalcPeriodId(rs.getLong("calc_period_id"));
+                    taskExec.setSelectorBizCtrl(rs.getString("selector_biz_ctrl"));
+                    taskExec.setProcessorBizCtrl(rs.getString("processor_biz_ctrl"));
+                    taskExec.setInsertorBizCtrl(rs.getString("insertor_biz_ctrl"));
+                    taskExec.setStatus(rs.getString("status"));
+                    taskExec.setStartedAt(rs.getTimestamp("started_at") != null ? 
+                        rs.getTimestamp("started_at").toLocalDateTime() : null);
+                    taskExec.setFinishedAt(rs.getTimestamp("finished_at") != null ? 
+                        rs.getTimestamp("finished_at").toLocalDateTime() : null);
+                    taskExec.setTaskExecNote(rs.getString("task_exec_note"));
+                    return taskExec;
+                }, taskExecCode);
+            } catch (Exception e) {
+                continue;
+            }
+        }
+        
+        throw new RuntimeException("Task Execution not found: " + taskExecCode);
+    }
+    
+    /**
+     * Ensure Process Execution exists (tự động tạo nếu chưa có)
+     * Lưu lại lịch sử process nào đã chạy vào schema động
+     */
+    @Transactional
+    private void ensureProcessExecutionExists(TaskExecutionRequest request, String schema) {
+        String procExecCode = request.getProcExecCode();
+        
+        // Check if already exists by checking if we can find proc_exec for this process
+        // Note: Bảng dùng process_id (FK), không có proc_exec_code
+        String processCode = request.getProcessCode();
+        
+        // Get process_id from proc_code
+        String getProcessIdSQL = String.format(
+            "SELECT id FROM %s.uce_process WHERE proc_code = ?",
+            schema
+        );
+        
+        try {
+            Long processId = jdbcTemplate.queryForObject(getProcessIdSQL, Long.class, processCode);
+            
+            // Check if proc_exec already exists for this process
+            String checkSQL = String.format(
+                "SELECT COUNT(*) FROM %s.uce_proc_exec WHERE process_id = ? AND status = 'RUNNING'",
+                schema
+            );
+            Integer count = jdbcTemplate.queryForObject(checkSQL, Integer.class, processId);
+            if (count != null && count > 0) {
+                return; // Already exists
+            }
+            
+            // Insert new proc_exec
+            String insertSQL = String.format(
+                "INSERT INTO %s.uce_proc_exec (process_id, execution_params, status, started_at) VALUES (?, ?, ?, ?)",
+                schema
+            );
+            
+            String executionParams = String.format("proc_exec_code=%s, calc_prog_id=%d, calc_period_id=%d",
+                procExecCode,
+                request.getCalcProgId() != null ? request.getCalcProgId() : 0,
+                request.getCalcPeriodId() != null ? request.getCalcPeriodId() : 0
+            );
+            
+            jdbcTemplate.update(insertSQL, processId, executionParams, "RUNNING", LocalDateTime.now());
+            log.info("✅ Logged Process Execution for process_id: {} in schema: {}", processId, schema);
+            
+        } catch (Exception e) {
+            log.warn("Could not create proc_exec: {}", e.getMessage());
+        }
     }
     
     /**
@@ -256,7 +447,7 @@ public class UceExecutionService {
      */
     private UceTask queryTaskFromSchema(String schema, String taskCode) {
         String sql = String.format("""
-            SELECT task_id, task_code, proc_code, meta_task_code, meta_proc_code,
+            SELECT id, task_code, proc_code, meta_task_code, meta_proc_code,
                    calc_prog_id, calc_period_id, selector_biz, processor_biz, 
                    insertor_biz, status, task_note
             FROM %s.uce_task
@@ -265,7 +456,7 @@ public class UceExecutionService {
         
         List<UceTask> results = jdbcTemplate.query(sql, (rs, rowNum) -> {
             UceTask task = new UceTask();
-            task.setTaskId(rs.getLong("task_id"));
+            task.setTaskId(rs.getLong("id"));  // Column name is 'id' not 'task_id'
             task.setTaskCode(rs.getString("task_code"));
             task.setProcCode(rs.getString("proc_code"));
             task.setMetaTaskCode(rs.getString("meta_task_code"));
